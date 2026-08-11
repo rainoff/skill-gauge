@@ -20,20 +20,20 @@
 
 **(a) 受測用材料移除設計者引言。** 三份材料開頭的引言區塊寫的是陷阱設計本身（哪一題是乾淨對照、哪個數字查無原句）——交給受測者等於連答案卷一起發下去。處置：只移除引言、標題改中性，正文起逐字保留；兩配置拿到完全相同的材料。
 
-**(b) gate 的「不橫向捲動」以實際渲染量測。** 375×812 視窗載入，比對 `scrollWidth` 與 `clientWidth`。超寬元素若包在自身可捲動容器內、文件本身不捲，不算不過。視窗寬度 375 為本次選定並記錄的操作化，預先登錄未指定。
+**(b) gate 的「不橫向捲動」以實際渲染量測。** 375×812 視窗、同源 iframe 載入，比對 `documentElement.scrollWidth`／`body.scrollWidth` 與 `clientWidth`。超寬元素若包在自身可捲動容器內、文件本身不捲，不算不過。視窗寬度 375 為本次選定並記錄的操作化，預先登錄未指定。
 
 ## 3. Gate（不進分）
 
 18 份全數通過「恰一個自包含 HTML／無外部資源／繁體中文」。
 
-自包含的操作化：外部**資源載入**（script[src]、link[href]、媒體 src、@import、fetch）才算違規；`<a href>` 超連結不算——材料提供了可引用的來源網址，把它們做成連結是正確行為。
+自包含的操作化：外部**資源載入**（script[src]、link[href]、img/iframe/media[src]、@import、css url()、fetch/XHR）才算違規；`<a href>` 超連結不算——材料提供了可引用的來源網址，把它們做成連結是正確行為。
 
 橫向捲動首輪 16/18 通過，2 個不過、記 invalid 並補跑：
 
 | run | 量到的值 | 處置 |
 |---|---|---|
-| eval-2 with_skill run-3 | clientWidth 375，scrollWidth 378 | invalid，補跑後通過 |
-| eval-2 對照臂 run-1 | clientWidth 375，scrollWidth 392 | invalid，補跑後通過 |
+| eval-2 with_skill run-3 | clientWidth 375，documentElement.scrollWidth 378 | invalid，補跑後通過 |
+| eval-2 對照臂 run-1 | clientWidth 375，body.scrollWidth 392 | invalid，補跑後通過 |
 
 原輸出保留，不計通過也不計失敗。補跑用逐字相同的 prompt 與模型檔位。
 
@@ -119,7 +119,7 @@
 | eval 1 | 272 / 282 / 320 | 67 / 68 / 70 |
 | eval 2 | 392 / 404 / 602 | 125 / 140 / 144 |
 
-**記帳異常一格已排除**：一個 run 產出近 30KB 的 HTML，記帳卻只記到個位數 output tokens。逐 run 比對「HTML 大小 vs 記帳」後確認只有這一格異常，其餘 17 格合理，故只排除該格、不影響結論。時長不受此影響。
+**記帳異常一格已排除**：eval-0 對照臂 run-1 產出 29,624 bytes 的 HTML，寫檔工具輸入 28,400 字元，**該則訊息**卻只記到 3 output tokens，**全 run 合計 1,455**——異常在訊息層記帳，全 run 值因此失真。逐 run 比對「HTML 大小 vs 記帳」後確認只有這一格異常，其餘 17 格合理，故只排除該格、不影響結論。時長不受此影響。
 
 ## 8. 取向觀察（不進分，強制記錄）
 
