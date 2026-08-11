@@ -43,7 +43,7 @@ v2 之前有過一版。v1 的失敗本身就是教材：
 
 ## 執行紀律
 
-1. fresh session、乾淨 workspace（trial 隔離）。
+1. fresh session、乾淨 workspace（trial 隔離）。**注意：本次實跑（2026-07-27）尚未使用主 README 致意段的沙箱隔離做法**（暫存沙箱＋`--setting-sources project --strict-mcp-config`）——那是本 repo 對後續量測的標準；因此本次對照臂只做到「沒用 skill」，做不到「skill 不在可用清單上」，此缺口已列入 RESULTS 的限制段與 v3 修正。
 2. 每配置 3 run，跑滿——v1 設 3 只跑 1，那種數據不能用。
 3. gate 不過的 run 記 invalid 補跑，不算失敗也不算通過。
 4. 跑完先填 RESULTS（數據），才可寫任何結論；結論措辭受「能說／不能說」約束。
