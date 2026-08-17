@@ -3,9 +3,9 @@
 > 本檔在**開跑之前**寫完並 commit。跑完不得回頭改判準；要改，開新版本、留下這一版。
 > 防的是最常見的自欺：先看結果，再挑會讓結果好看的判準。
 
-## 座標宣告（必填——結論只在這四個座標內成立）
+## 條件宣告（必填——結論只在這四個條件內成立）
 
-| 座標 | 本次量測的值 |
+| 條件 | 本次量測的值 |
 |------|-------------|
 | 模型 | {受測執行用哪個模型？評分用哪個模型？兩者都要填實際跑的值，不填「預計」} |
 | harness | {量測環境裡還有什麼：全域規則？記憶？其他 skill？隔離做法寫具體（見下方執行紀律）} |
@@ -51,7 +51,7 @@
 ## 執行紀律
 
 1. fresh session、乾淨 workspace，每 run 隔離。
-2. 隔離操作化（採 skill-forge cli-executor 做法）：暫存沙箱目錄＋`--setting-sources project --strict-mcp-config`，受測 skill 以 project 層放入沙箱——全域規則與記憶不載入，兩臂旗標對稱。用前先做已知答案檢查：確認正常環境讀得到的全域內容，在沙箱內真的讀不到。
+2. 隔離操作化（採 skill-forge cli-executor 做法，並依 2026-08-17 兩機已知答案探針補正）：在**不位於 home 底下**的暫存目錄建隔離環境（cwd 及其每一層祖先目錄都不得有 `.claude/`——`project` 來源會把祖先目錄的 `.claude/rules/*.md` 一併當 project rules 載入；mac 的 `$TMPDIR` 在 `/var/folders/…` 可用，Windows 的 `%TEMP%` 在使用者目錄底下**不可用**），受測 skill 以 project 層放入該目錄的 `.claude/skills/`；執行時同時給三件：`--setting-sources project`、`--strict-mcp-config`、環境變數 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`（前兩支旗標管不到自動記憶，這是官方記載的行為，不加它記憶照樣載入）。兩臂旗標與環境變數對稱。**用前先做已知答案檢查，且每格兩臂**：同一個目錄、同一句問句，只差有無上述旗標——不帶旗標那臂要讀得到一個指定的全域規則條款／記憶索引／全域 skill，帶旗標那臂要讀不到；只有「讀不到」沒有「同目錄讀得到」的對照，不能歸因給旗標（可能只是換了目錄）。目前已驗的 canary：一條 user rule、一個 user skill、一個 user hook、auto-memory 索引；MCP 未設 canary，不在已驗範圍。
 3. 對照臂的誠實檢查：確認對照臂不只「沒用 skill」，而是「skill 不在可用清單上」——skill 在清單上但沒被用，量到的是上界不是乾淨差值。
 4. gate 不過的 run 記 invalid 補跑（逐字相同 prompt），不算失敗也不算通過。
 5. 評分模型欄位**實填**，不留佔位符。
