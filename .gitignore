@@ -1,0 +1,10 @@
+# 這個 repo 的 skill 與引擎住在 .claude/skills/skill-gauge/，必須進版控（全域 gitignore 排除了 .claude/，這裡拉回來）
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/skill-gauge/
+# 個人設定不進 repo
+.claude/settings.local.json
+# 引擎產出的量測結果（gauge/*/runs/）預設不進 repo；要留就自己 add
+gauge/*/runs/

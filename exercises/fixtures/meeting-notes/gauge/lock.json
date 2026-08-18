@@ -1,0 +1,37 @@
+{
+  "lockedAt": "2026-08-18T04:17:47.073Z",
+  "entries": [
+    {
+      "label": "gauge.json",
+      "sha256": "1f21b5558fbfa21d5e3d2aec127e09ad51580222b46080878ec1cd3faa57b0e1"
+    },
+    {
+      "label": "skill/SKILL.md",
+      "sha256": "7ce9cc2f80c4ed2084ac55c6c7e2f0e374e7430bd48bfb9fd810c6a0353ec2d1"
+    },
+    {
+      "label": "case/case-01-trap/prompt",
+      "sha256": "b8a2dc11a5700e82e417c16988055e203255f07898ab962bb2e1c7dc5608b282"
+    },
+    {
+      "label": "case/case-01-trap/material-0",
+      "sha256": "80ecb95c733216aa2c5d4fd1e7166c9b234e05efd0b69ec10e48576fdf503fb6"
+    },
+    {
+      "label": "case/case-02-clean/prompt",
+      "sha256": "c94b103ab467538dbaa6238d12f4e4ffde68e10ed53c202a995b0c78491aee89"
+    },
+    {
+      "label": "case/case-02-clean/material-0",
+      "sha256": "12ad56f04f9bfefe0ac672579a90f0e8fa65d0e1883948681b108ad6560c4115"
+    },
+    {
+      "label": "case/case-03-negative/prompt",
+      "sha256": "f163f577e038240831f74a0f3bd419d4c8c95c76a4aefaca17689a9d87033a90"
+    },
+    {
+      "label": "case/case-03-negative/material-0",
+      "sha256": "7137fb453d7aefb9e227b1ff7e03c1b64211f220583b913566ef5362a61f54fe"
+    }
+  ]
+}

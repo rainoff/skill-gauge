@@ -4,6 +4,31 @@
 >
 > **這是 v0**：只放三件——量測模板、一個完整的實測範例、一題練習。其餘見 [roadmap](docs/roadmap.md)。
 
+## 最快的用法：交給你的 AI（v1）
+
+這個 repo 本身就是一個 skill，還帶一支量測引擎。你不用自己填模板、不用自己開兩組跑：讓你的 AI 照著做，你只負責回答六個問題、看一眼預先登錄說「可以」，然後讀報告。
+
+**用 Claude Code 的人**
+
+```zsh
+git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
+```
+
+然後說一句：「用 skill-gauge 幫我量 ○○ skill」（○○ 是一個含 SKILL.md 的資料夾）。接下來會發生的事：
+
+1. 它問你六個問題——最重要的一題是「這個 skill 讓你翻車過哪兩次」，題目只從這裡來。
+2. 它生出題目、預先登錄、`gauge.json`，然後**停下來等你說「可以」**。你說可以，它才鎖定這些輸入。
+3. 它先報成本（幾次執行、大約多久），你點頭才跑：引擎先做已知答案檢查確認隔離真的成立，再把兩組（帶 skill／不帶）交錯跑滿次數，每一次都是家目錄以外的新目錄、只放受測 skill；再把每份產出交給另一個新對話盲評；最後出報告。
+4. 報告開頭有一段白話摘要（差幾格、翻幾格就反轉、哪些檢查項測不出差別、成本），它照預先登錄寫死的「能說／不能說」寫結果，不會替你把描述寫成因果。
+
+要在別的專案裡用，把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）。教具：`exercises/fixtures/meeting-notes/` 是一個十行的會議記錄 skill＋一套跑得起來的 `gauge.json`，想先看引擎長什麼樣，`cd` 進去跑 `node ../../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`。
+
+**用 Cowork／Claude Desktop／Claude.ai 的人**
+
+把 `.claude/skills/skill-gauge/SKILL.md` 和 `templates/` 三份檔的內容貼給你的 AI，說同一句話。它能帶你做完問答與預先登錄；兩組要靠你自己開新對話跑，做法見下方「不用 Claude Code 的同事怎麼跑」。
+
+**想先搞懂方法的人**：讀實測範例、做練習題（不用跑程式），見「快速開始」。
+
 ## 定位：方法可攜、題目自備、結論綁條件
 
 skill 的效果不是一個孤立的數字，它取決於量測當下的四個條件：
@@ -29,9 +54,9 @@ skill 的效果不是一個孤立的數字，它取決於量測當下的四個�
 3. 做 [練習題](exercises/01-meeting-notes-skill.md)：不用跑任何程式，用模板為一個虛構 skill 設計量測。
 4. 要量你自己的 skill 時，照下面「[怎麼跑一次量測](#怎麼跑一次量測claude-code)」做——先做已知答案檢查，再開跑。
 
-## 怎麼跑一次量測（Claude Code）
+## 怎麼跑一次量測（Claude Code）——引擎自動做的事，手動也能照抄
 
-前提：Claude Code 已安裝並登入（`claude --version` 有回應）。跑法只有三件事：**隔離目錄、三個開關、先做已知答案檢查**。
+上面「最快的用法」裡的引擎（`.claude/skills/skill-gauge/scripts/gauge.mjs`）做的就是下面這五步。想自己動手、或想確認引擎沒騙你，照抄即可。前提：Claude Code 已安裝並登入（`claude --version` 有回應）。跑法只有三件事：**隔離目錄、三個開關、先做已知答案檢查**。
 
 ### 1. 開隔離目錄——不能在使用者主目錄底下
 
