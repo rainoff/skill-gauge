@@ -779,6 +779,7 @@ function buildReport(cfg, outDir) {
   report.lock = fs.existsSync(lock) ? verifyLock(cfg, lock) : { ok: false, reason: '無 lock.json' };
   report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下', process.env.GAUGE_ENV_PASSTHROUGH === '1' ? '⚠ 環境變數整份放行（GAUGE_ENV_PASSTHROUGH=1）' : '環境變數白名單'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
   if (cfg.__matrixCell) report.matrixCell = cfg.__matrixCell;
+  report.summary = plainSummary(report);
   return report;
 }
 
@@ -801,12 +802,81 @@ function runDetail(runDir, meta, g) {
   };
 }
 
+
+// ---------- 摘要結論：給人看的一頁（不出現 id、不出現組名代號、一個主數字；四問：有沒有幫上忙／贏在哪輸在哪／限制／下一步） ----------
+const ARM_ZH = { with: '帶 skill', without: '不帶', reminder: '只給一句提醒' };
+const armZh = (name) => ARM_ZH[name] || `另一個 skill（${name}）`;
+// 檢查項的人話名：優先 label；沒有就取 text 的第一個子句（到「；」「，」「（」或 24 字）
+function assertionLabel(a) {
+  if (!a) return '（未知檢查）';
+  if (a.label) return String(a.label).trim();
+  const t = String(a.text || '').replace(/^（不計分）/, '').trim();
+  const cut = t.search(/[；（(：:]/);
+  let head = cut > 0 ? t.slice(0, cut) : t;
+  if (head.length > 40) { const seg = head.slice(0, 40); const back = Math.max(seg.lastIndexOf('、'), seg.lastIndexOf('，'), seg.lastIndexOf(' ')); head = (back > 12 ? seg.slice(0, back) : seg) + '…'; }
+  return head || '（未命名檢查）';
+}
+const timesZh = (m, n) => `${n} 次裡 ${m} 次`;
+function plainSummary(r) {
+  const arms = r.arms || [];
+  const A = arms[0], B = arms.find((x) => x !== A && (r.baseline?.arm === x || x === 'without')) || arms[1];
+  const tA = r.totals?.[A], tB = r.totals?.[B];
+  const out = { helped: '', verdict: null, wins: [], losses: [], limits: [], next: [], oneLine: '' };
+  // 1. 有沒有幫上忙
+  if (r.baseline?.verdict === 'STOP') { out.verdict = 'stop'; out.helped = `不帶 skill 的模型這幾題每次都做對——這組題測不出 skill 的貢獻（要嘛模型本來就會、要嘛題目太鬆）。`; }
+  else if (!tA || !tB || !tA.total || !tB.total) { out.verdict = 'no-data'; out.helped = '兩組還沒有可以比的結果（run 作廢或失敗），先補跑。'; }
+  else {
+    const D = tA.pass - tB.pass, same = tA.total === tB.total, F = same ? Math.abs(D) + 1 : null;
+    const rel = tA.total ? D / tA.total : 0; // 相對差距：<5% 差不多、5–15% 有一點差、>15% 有差
+    const level = D < 0 ? '帶 skill 反而差' : rel < 0.05 ? '差不多' : rel < 0.15 ? '有一點差、不算穩' : '有差';
+    out.verdict = D < 0 ? 'worse' : rel < 0.05 ? 'same' : rel < 0.15 ? 'small' : 'better';
+    out.helped = same ? `帶 skill 的 ${tA.total} 格裡過 ${tA.pass} 格，不帶的過 ${tB.pass} 格——${D >= 0 ? '多' : '少'} ${Math.abs(D)} 格；翻 ${F} 格就反過來，所以是「${level}」。` : `帶 skill 過 ${tA.pass}／${tA.total} 格，不帶過 ${tB.pass}／${tB.total} 格；兩組總格數不同（有作廢或失敗），先補跑再比。`;
+    if (r.primary?.claimStatus === 'confirmatory-claim') out.helped = `【確證句成立】` + out.helped; else if (r.primary?.claimStatus === 'confirmatory-null') out.helped = `【確證口徑：分不出方向】` + out.helped;
+  }
+  out.oneLine = out.helped;
+  // 2. 贏在哪、輸在哪（逐條檢查項）
+  const rows = Object.entries(r.assertions || {}).filter(([, x]) => x.family === 'fact' || x.family === 'judgment').map(([id, x]) => ({ id, label: assertionLabel(x), a: x.arms?.[A], b: x.arms?.[B] })).filter((x) => x.a && x.b && x.a.total && x.b.total);
+  const wins = rows.filter((x) => x.a.pass / x.a.total > x.b.pass / x.b.total).sort((x, y) => (y.a.pass / y.a.total - y.b.pass / y.b.total) - (x.a.pass / x.a.total - x.b.pass / x.b.total)).slice(0, 3);
+  for (const w of wins) out.wins.push(`${w.label}：不帶 ${timesZh(w.b.total - w.b.pass, w.b.total)}沒過，帶 skill ${w.a.pass === w.a.total ? '全過' : timesZh(w.a.pass, w.a.total) + '過'}`);
+  const losses = rows.filter((x) => x.a.pass / x.a.total < x.b.pass / x.b.total).sort((x, y) => (y.b.pass / y.b.total - y.a.pass / y.a.total) - (x.b.pass / x.b.total - x.a.pass / x.a.total)).slice(0, 3);
+  for (const l of losses) out.losses.push(`${l.label}：帶 skill 反而 ${timesZh(l.a.total - l.a.pass, l.a.total)}沒過（不帶 ${timesZh(l.b.total - l.b.pass, l.b.total)}沒過）`);
+  const bothFail = rows.filter((x) => x.a.pass === 0 && x.b.pass === 0).slice(0, 2);
+  for (const bf of bothFail) out.losses.push(`${bf.label}：帶不帶都 ${bf.a.total} 次全沒過——標準太嚴或規則不清，去看產出`);
+  const fp = r.footprint;
+  if (fp && fp.negativeKnown && fp.negativeFired > 0) out.losses.push(`不該出手的題目 ${timesZh(fp.negativeFired, fp.negativeKnown)} skill 還是被叫起來${r.trigger?.should?.n ? `（該叫的時候 ${timesZh(r.trigger.should.fired, r.trigger.should.n)}有叫）` : ''}`);
+  if (fp && fp.known && fp.fired < fp.known) out.losses.push(`帶 skill 那組 ${timesZh(fp.fired, fp.known)}才真的載入 skill——先看觸發，再談效果`);
+  for (const pl of r.placebo || []) { const t = r.totals?.[pl.arm]; if (!t) continue; const isReminder = pl.arm === 'reminder'; out.losses.push(`${armZh(pl.arm)}那組過 ${t.pass} 格${pl.reminderEffect < 0 ? '，比不帶還差' : ''}——${isReminder ? 'skill 的內容比一句提醒多' : '帶這個 skill 比它多'} ${pl.contentEffect} 格${Math.abs(pl.contentEffect) <= 2 ? '（差距很小）' : ''}`); }
+  // 3. 限制
+  const cases = (r.cases || []).length, runs = r.runsPlanned;
+  out.limits.push(`只有 ${cases} 題、每題 ${runs ?? '?'} 次；${r.conditions?.executorModel ? `執行模型 ${r.conditions.executorModel}` : ''}${r.conditions?.judgeModel ? `、評分模型 ${r.conditions.judgeModel}` : ''}——結論只在這個條件內`);
+  const zero = (r.flags || []).filter((f) => f.startsWith('零鑑別')).length;
+  if (zero) out.limits.push(`${zero} 條檢查兩組都全過：題目對這個模型太簡單，測不出差別`);
+  if (tA && tB && tA.total === tB.total && tA.pass !== tB.pass) out.limits.push(`翻 ${Math.abs(tA.pass - tB.pass) + 1} 格就反轉，不要當定論`);
+  if ((r.invalidRuns || []).length || (r.harnessFailures || []).length) out.limits.push(`有 ${(r.invalidRuns || []).length} 次作廢、${(r.harnessFailures || []).length} 次執行／評分失敗，數字還不完整`);
+  if ((r.flags || []).some((f) => f.startsWith('同格'))) out.limits.push('同一題重複跑的結果幾乎一樣，有效樣本比次數少');
+  // 4. 下一步（人話版）
+  const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實翻車、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看作廢', '先看作廢的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
+  for (const n of r.nextSteps || []) { const hit = NEXT.find(([k]) => n.startsWith(k)); out.next.push(hit ? hit[1] : n.replace(/`[^`]*`/g, '').slice(0, 120)); }
+  out.next = [...new Set(out.next)].slice(0, 3);
+  return out;
+}
+function summaryMarkdown(sm) {
+  const L = ['## 摘要結論（給人看的一頁）', '', `**有沒有幫上忙？** ${sm.helped}`, ''];
+  if (sm.wins.length) L.push(`**贏在哪：**`, ...sm.wins.map((x) => `- ${x}`), '');
+  if (sm.losses.length) L.push(`**輸在哪／要注意：**`, ...sm.losses.map((x) => `- ${x}`), '');
+  L.push(`**這次的限制：**`, ...sm.limits.map((x) => `- ${x}`), '');
+  if (sm.next.length) L.push(`**下一步：**`, ...sm.next.map((x) => `- ${x}`), '');
+  L.push('（下面是工程細節；轉述給別人只用這一頁）', '');
+  return L;
+}
+
 function reportMarkdown(cfg, r) {
   const arms = r.arms;
   const L = [];
   L.push(`# skill-gauge 報告 — ${r.name}`, '', `產生時間：${r.generatedAt}`, '');
+  L.push(...summaryMarkdown(r.summary || plainSummary(r)));
   // 先看這裡：用資料生成的白話摘要（描述性）
-  L.push('## 先看這裡（描述性，只限這次條件）', '');
+  L.push('## 先看這裡（工程細節；描述性，只限這次條件）', '');
   if (r.baseline) L.push(`- 停案規則：不帶 skill 那組先跑完 ${r.baseline.validRuns} 次有效 run——${r.baseline.verdict === 'STOP' ? '**已停。**' + r.baseline.note : r.baseline.verdict === 'CONTINUE' ? '沒全過（' + r.baseline.weakAssertions.join('、') + '），繼續跑帶 skill 那組。' : '沒有有效資料。'}`);
   const tA = r.totals[arms[0]], tB = r.totals[arms[1]];
   if (tA && tB) {
@@ -1503,5 +1573,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay };
+export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));

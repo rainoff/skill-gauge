@@ -69,6 +69,7 @@ t('合理化說詞逐字擷取檔存在', fs.existsSync(path.join(outAll, 'press
 t('觸發：該觸發 16 次裡 14 次（standup 題 2 次沒觸發）、不該觸發 0 誤觸發', rep?.trigger && rep.trigger.should.n === 16 && rep.trigger.should.fired === 14 && rep.trigger.shouldNot.fired === 0, JSON.stringify(rep?.trigger && { s: rep.trigger.should, n: rep.trigger.shouldNot }));
 t('逐 run 明細含產出全文', Array.isArray(rep?.runs) && rep.runs.length === 15 && rep.runs.every((x) => typeof x.output === 'string'), String(rep?.runs?.length));
 t('report.html 產出且含「先看這裡」', fs.existsSync(path.join(outAll, 'report.html')) && fs.readFileSync(path.join(outAll, 'report.html'), 'utf8').includes('先看這裡'));
+t('report.md 第一段是「摘要結論」且不含檢查項 id；report.html 摘要在最前', (() => { const md = fs.readFileSync(path.join(outAll, 'report.md'), 'utf8'); const i = md.indexOf('## 摘要結論'), j = md.indexOf('## 先看這裡'); const seg = md.slice(i, j); const h = fs.readFileSync(path.join(outAll, 'report.html'), 'utf8'); return i > 0 && j > i && /有沒有幫上忙/.test(seg) && !/fact-no-invented-deadline|judgment-/.test(seg) && h.indexOf('摘要結論') < h.indexOf('先看這裡'); })());
 t('history.jsonl 有一列', fs.existsSync(path.join(fx, 'gauge', 'history.jsonl')) && fs.readFileSync(path.join(fx, 'gauge', 'history.jsonl'), 'utf8').trim().split('\n').length === 1);
 // 3. 已跑過的不重跑：再跑一次 report 只重算；history 同目錄不重複追加
 r = run(['report', '--config', CFG, '--out', outAll]); t('report 重算成功', r.code === 0);

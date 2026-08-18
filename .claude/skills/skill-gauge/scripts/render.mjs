@@ -402,6 +402,7 @@ export function renderReportHtml(report, opts = {}) {
   if (nz(r.engine)) chips.push(chip(`量測引擎 ${txt(r.engine)}`));
 
   const sections = [
+    secSummary(r),
     secKeyPoints(r, arms, sens),
     secSayNotSay(),
     secConditions(r, arms),
@@ -433,6 +434,17 @@ export function renderReportHtml(report, opts = {}) {
 }
 
 // 1. 先看這裡
+// 0. 摘要結論（給人看的一頁；report.summary 由引擎產生，沒有就不顯示）
+function secSummary(r) {
+  const sm = asObj(r.summary);
+  if (!nz(sm.helped)) return null;
+  const list = (title, arr) => (asArr(arr).length ? `<h3>${esc(title)}</h3><ul class="keypoints">${asArr(arr).map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '');
+  return section('summary', '摘要結論（給人看的一頁）',
+    `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>有沒有幫上忙？</strong> ${esc(txt(sm.helped))}</p>
+${list('贏在哪', sm.wins)}${list('輸在哪／要注意', sm.losses)}${list('這次的限制', sm.limits)}${list('下一步', sm.next)}
+<p class="note">下面是工程細節；轉述給別人只用這一頁。</p>`);
+}
+
 function secKeyPoints(r, arms, sens) {
   const A = arms[0], B = arms[1];
   const L = [];
