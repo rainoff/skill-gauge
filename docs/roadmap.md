@@ -45,6 +45,7 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 
 兩位獨立審查者（codex gpt-5.6-sol，read-only）在 08-18 各審一輪，能當天修的都修了（c663fac、fcb8d44）；以下是明說「還沒做」的：
 
+- ~~核可頁~~ **已完成（2026-08-18）**：新增 `preview` 子指令，把 `gauge.json`＋`pre-registration.md` 整理成一頁核可頁（`preview.html`，不用 `claude` 也能出、不寫 lock）——維護者 dogfood v1.1 時發現第 3 步把 `pre-registration.md` 全文貼進對話不可讀，SKILL.md 第 3 步改為出核可頁給人看、說「可以」才鎖定；斷言加 `label`（給人看的白話版，`text` 仍是給評分者的判斷句，兩者分離）。
 - 停止點機械化：`prepare`／`approve`／`run` 狀態機，核可留收據，`all` 只接受 approved 狀態（現在四個停止點靠 SKILL.md 文字＋lock）。
 - 正式資料契約：`report.json`／`matrix.json`／`describe.json`／`grading.json`／`meta.json`／`lock.json`／`history.jsonl` 各一份 JSON Schema＋`contractVersion`；grading 記 assertion 集雜湊（同目錄改檢查項時不沿用舊評分）。
 - 描述優化改三分（train／validation／final test）：validation 選版本、final test 只對選定版本跑一次；description 讀寫換真正的 YAML parser（block scalar 含空白行會寫壞）。

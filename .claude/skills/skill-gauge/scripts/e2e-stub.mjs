@@ -28,6 +28,31 @@ let r = run(['lock', '--config', CFG]); t('lock 成功', r.code === 0, r.out.sli
 r = run(['lock', '--config', CFG]); t('已有 lock.json 時再 lock 被拒（不可靜默覆寫）', r.code !== 0 && /relock/.test(r.out));
 r = run(['lock', '--config', CFG, '--relock']); t('--relock 成功且留下舊鎖', r.code === 0 && fs.readdirSync(path.join(fx, 'gauge')).some((f) => f.startsWith('lock.prev-')) && readJ(path.join(fx, 'gauge', 'lock.json')).relocks === 1);
 { const pre = path.join(fx, 'gauge', 'pre-registration.md'); const bak = pre + '.bak'; fs.renameSync(pre, bak); const rr = run(['lock', '--config', CFG, '--relock']); t('沒有 pre-registration.md 拒鎖', rr.code !== 0 && /pre-registration/.test(rr.out)); fs.renameSync(bak, pre); }
+// 1b. preview：核可頁——未鎖定／已鎖定／不一致三態；不需要 claude 也能出
+{
+  const lockPath = path.join(fx, 'gauge', 'lock.json');
+  const savedLock = fs.readFileSync(lockPath); // 這時已經是上面 --relock 後的鎖定狀態
+  fs.rmSync(lockPath);
+  const outBefore = path.join(work, 'preview-before.html');
+  r = run(['preview', '--config', CFG, '--out', outBefore]);
+  const htmlBefore = fs.existsSync(outBefore) ? fs.readFileSync(outBefore, 'utf8') : '';
+  t('preview（未鎖定）exit 0，提到未鎖定／meeting-notes／成本估算', r.code === 0 && /未鎖定/.test(htmlBefore) && /meeting-notes/.test(htmlBefore) && /成本估算/.test(htmlBefore), r.out.slice(-300));
+  fs.writeFileSync(lockPath, savedLock);
+  const outLocked = path.join(work, 'preview.html');
+  r = run(['preview', '--config', CFG, '--out', outLocked]);
+  const htmlLocked = fs.existsSync(outLocked) ? fs.readFileSync(outLocked, 'utf8') : '';
+  t('preview（已鎖定）exit 0，提到已鎖定', r.code === 0 && /已鎖定/.test(htmlLocked), r.out.slice(-300));
+  const promptPath = path.join(fx, 'gauge', 'case-01-trap.prompt.md');
+  const savedPrompt = fs.readFileSync(promptPath, 'utf8');
+  fs.writeFileSync(promptPath, savedPrompt + '\n\n（e2e 測試改動）');
+  const outMismatch = path.join(work, 'preview-mismatch.html');
+  r = run(['preview', '--config', CFG, '--out', outMismatch]);
+  const htmlMismatch = fs.existsSync(outMismatch) ? fs.readFileSync(outMismatch, 'utf8') : '';
+  t('preview（改動後）exit 0，顯示不一致', r.code === 0 && /不一致/.test(htmlMismatch), r.out.slice(-300));
+  fs.writeFileSync(promptPath, savedPrompt);
+  const rNoClaude = spawnSync(process.execPath, [ENGINE, 'preview', '--config', CFG, '--out', path.join(work, 'preview-noclaude.html')], { env: { ...process.env, PATH: '/usr/bin:/bin' }, encoding: 'utf8' });
+  t('preview 不用 claude 也能跑（PATH 裡沒有 claude 一樣過）', rNoClaude.status === 0, ((rNoClaude.stdout || '') + (rNoClaude.stderr || '')).slice(-300));
+}
 // 2. all --runs 1 --with-trigger（stub 的不帶 skill 組故意失兩條 → 不會 STOP）
 const outAll = path.join(work, 'out-all');
 r = run(['all', '--config', CFG, '--out', outAll, '--runs', '1', '--with-trigger']);

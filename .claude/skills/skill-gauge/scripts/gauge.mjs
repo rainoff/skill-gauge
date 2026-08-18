@@ -16,6 +16,7 @@
 //   node scripts/gauge.mjs lock    … [--relock] [--allow-missing-prereg]              （鎖定不可靜默覆寫；預設要有 pre-registration.md）
 //   node scripts/gauge.mjs describe --config <gauge.json> --out <dir> [--rounds 3] [--runs 3] [--holdout 0.4] [--apply]  （描述優化迴圈：只改 description，held-out 選最佳，預設不寫回）
 //   node scripts/gauge.mjs html    --out <dir>                                       （只重出 report.html）
+//   node scripts/gauge.mjs preview --config <gauge.json> [--out <file.html>] [--open]  （核可頁：把 gauge.json＋pre-registration.md 整理成一頁，不用 claude 也能出、不寫 lock，給人核可用）
 //   node scripts/gauge.mjs history --config <gauge.json>                             （這份題組歷次量測；compare --config 拿最近兩次同條件的相減）
 //   壓力測試：cases[].type = "pressure" 加 rule／pressures／expectedBehavior（comply|exempt），引擎自動加「守住規則」檢查項並逐字擷取合理化說詞（pressure-capture.json）。
 //   假模型端到端：GAUGE_CLAUDE_CMD="node scripts/stub-claude.mjs" 可在沒有 claude 的機器上跑整條流程（CI 用）。
@@ -31,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.1.0';
+const ENGINE_VERSION = '1.2.0';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
@@ -256,6 +257,7 @@ function loadConfig(p) {
   for (const a of cfg.arms) if (!/^[A-Za-z0-9._-]+$/.test(String(a.name))) die(`arm name 只准英數與 ._-：${a.name}`);
   for (const c of cfg.cases) for (const id of c.assertions) if (!ids.has(id)) die(`case ${c.id} 引用不存在的斷言 ${id}`);
   for (const a of cfg.assertions) if (!['gate', 'fact', 'judgment', 'orientation'].includes(a.family)) die(`斷言 ${a.id} 的 family 必須是 gate/fact/judgment/orientation`);
+  for (const a of cfg.assertions) if (a.label != null && typeof a.label !== 'string') die(`斷言 ${a.id} 的 label 必須是字串（給人看的白話版；評分只讀 text）`);
   return cfg;
 }
 
@@ -617,6 +619,7 @@ function buildReport(cfg, outDir) {
   const scoredIds = cfg.assertions.filter((a) => a.family === 'fact' || a.family === 'judgment').map((a) => a.id);
   const famOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.family]));
   const textOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.text]));
+  const labelOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.label || null]));
   const report = { kind: 'report', engine: ENGINE_VERSION, name: cfg.name, generatedAt: new Date().toISOString(), arms: cfg.arms.map((a) => a.name), runsPlanned: cfg.runs, cases: [], assertions: {}, totals: {}, cost: {}, flags: [], similarity: [], runs: [] };
   const passCount = {}; // arm -> {pass, total}
   const perAssertion = {}; // id -> arm -> {pass,total}
@@ -715,7 +718,7 @@ function buildReport(cfg, outDir) {
     report.pressure = pr;
     if (pr.capture.length) writeJSON(path.join(outDir, 'pressure-capture.json'), pr.capture);
   }
-  report.assertions = Object.fromEntries(Object.entries(perAssertion).map(([id, arms]) => [id, { family: famOf[id], text: textOf[id], arms, implicit: !!cfg.assertions.find((a) => a.id === id)?.__implicit }]));
+  report.assertions = Object.fromEntries(Object.entries(perAssertion).map(([id, arms]) => [id, { family: famOf[id], text: textOf[id], label: labelOf[id], arms, implicit: !!cfg.assertions.find((a) => a.id === id)?.__implicit }]));
   report.totals = passCount;
   report.invalidRuns = invalid; report.harnessFailures = harnessFailures;
   report.cost = Object.fromEntries(cfg.arms.map((a) => [a.name, { medianDurationS: median((durations[a.name] || []).map((x) => x / 1000)), medianOutputTokens: median(outTok[a.name] || []), medianCostUsd: median(cost[a.name] || []), runs: (durations[a.name] || []).length, models: [...(models[a.name] || [])] }]));
@@ -1197,13 +1200,156 @@ function describeMarkdown(d) {
   return L.join('\n') + '\n';
 }
 
+// ---------- 核可頁（preview）：把 gauge.json＋pre-registration.md 整理成一頁給人核可，不用 claude ----------
+const PREVIEW_TYPE_LABEL = { trap: '陷阱題', clean: '乾淨對照題', negative: '負向對照題', pressure: '壓力題' };
+const PREVIEW_FAMILY_LABEL = { gate: '前置檢查（不計分）', fact: '事實紀律', judgment: '判斷紀律', orientation: '取向觀察（不計分）' };
+function previewTypeLabel(t) { return t ? PREVIEW_TYPE_LABEL[t] || t : null; }
+function previewFamilyLabel(f) { return PREVIEW_FAMILY_LABEL[f] || f; }
+
+// 材料檔前 600 字（best effort；含 NUL byte 判為二進位，不讀內容）
+function readMaterialHead(abs, cap = 600) {
+  try {
+    const buf = fs.readFileSync(abs);
+    const probeLen = Math.min(buf.length, 8000);
+    for (let i = 0; i < probeLen; i++) if (buf[i] === 0) return { head: null, truncated: false, bytes: buf.length };
+    const text = buf.toString('utf8');
+    const truncated = text.length > cap;
+    return { head: truncated ? text.slice(0, cap) : text, truncated, bytes: buf.length };
+  } catch { return { head: null, truncated: false, bytes: null }; }
+}
+
+// 預先登錄裡「能說／不能說」段落擷取：標題（任何層級）符合關鍵字，內文抓到下一個同層或更高層標題為止；
+// 標題同時含兩邊關鍵字（例如「能說／不能說」）→ 整段給 say，notSay 留 null
+function extractSayNotSay(md) {
+  const lines = txt(md).replace(/\r\n/g, '\n').split('\n');
+  const headings = [];
+  lines.forEach((line, idx) => { const m = /^(#{1,6})\s+(.*)$/.exec(line); if (m) headings.push({ level: m[1].length, text: m[2].trim(), idx }); });
+  // 「能說」的比對排除被「不」接住的那一個（否則「不能說」永遠也會命中「能說」，分不出獨立標題）；
+  // 標題同時含兩邊關鍵字（如「能說／不能說」）時，「能說」在句首那次不受「不」影響，isSay 仍會是 true
+  const sayRe = /(?<!不)能說|can say|may say|permitted claims/i;
+  const notSayRe = /不能說|cannot say|must not say|not permitted/i;
+  let say = null, notSay = null;
+  for (let hi = 0; hi < headings.length; hi++) {
+    const h = headings[hi];
+    const isSay = sayRe.test(h.text), isNotSay = notSayRe.test(h.text);
+    if (!isSay && !isNotSay) continue;
+    let end = lines.length;
+    for (let hj = hi + 1; hj < headings.length; hj++) if (headings[hj].level <= h.level) { end = headings[hj].idx; break; }
+    const body = lines.slice(h.idx + 1, end).join('\n').trim();
+    if (isSay && say == null) say = body;
+    if (isNotSay && !isSay && notSay == null) notSay = body; // 兩邊都命中的標題只算 say，notSay 留給獨立的「不能說」標題
+  }
+  return { say, notSay };
+}
+
+function txt(x) { return x === null || x === undefined ? '' : String(x); }
+
+function buildPreview(cfg, opts = {}) {
+  const dir = opts.gaugeDir || cfg.__dir;
+  const skillDesc = (() => {
+    if (cfg.__baselineOnly || !cfg.skill.__abs) return null;
+    const p = path.join(cfg.skill.__abs, 'SKILL.md');
+    if (!fs.existsSync(p)) return null;
+    try { const d = getDescription(fs.readFileSync(p, 'utf8')); return d ? d.slice(0, 240) : null; } catch { return null; }
+  })();
+  const skill = { name: cfg.skill.name || null, path: cfg.skill.path || null, exists: !!(cfg.skill.__abs && fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))), description: skillDesc };
+  const arms = cfg.arms.map((a) => {
+    if (a.skillPath) {
+      let desc = null;
+      const p = a.__abs ? path.join(a.__abs, 'SKILL.md') : null;
+      if (p && fs.existsSync(p)) { try { desc = getDescription(fs.readFileSync(p, 'utf8')); } catch {} }
+      const desc120 = desc ? desc.slice(0, 120) : null;
+      return { name: a.name, kind: 'path', what: `第三組：${desc120 || '（SKILL.md 沒有 description）'}`, path: a.skillPath, description: desc };
+    }
+    if (a.skill) return { name: a.name, kind: 'skill', what: '受測 skill', path: cfg.skill.path, description: skillDesc };
+    return { name: a.name, kind: 'none', what: '什麼都不給', path: null, description: null };
+  });
+  const conditions = { executorModel: cfg.executorModel || null, executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, runs: cfg.runs, allowedTools: cfg.allowedTools || [] };
+  const cases = cfg.cases.map((c) => ({
+    id: c.id, type: c.type || null, typeLabel: previewTypeLabel(c.type),
+    promptFile: c.promptFile, prompt: c.__prompt || '',
+    materials: (c.__materials || []).map((abs) => { const r = readMaterialHead(abs); return { name: path.basename(abs), bytes: r.bytes, head: r.head, truncated: r.truncated }; }),
+    assertions: c.assertions || [], note: c.note || null,
+    pressure: c.type === 'pressure' ? { rule: c.rule, pressures: c.pressures || [], expectedBehavior: c.expectedBehavior, expectedOption: c.expectedOption ?? null } : null,
+  }));
+  const casesOfAssertion = {};
+  for (const c of cfg.cases) for (const id of c.assertions || []) (casesOfAssertion[id] ||= []).push(c.id);
+  const assertions = cfg.assertions.map((a) => ({
+    id: a.id, family: a.family, familyLabel: previewFamilyLabel(a.family), text: a.text, label: a.label || null,
+    scored: a.family === 'fact' || a.family === 'judgment', implicit: !!a.__implicit, cases: casesOfAssertion[a.id] || [],
+  }));
+  const trigger = cfg.trigger ? { runs: cfg.trigger.runs, should: cfg.trigger.should || [], shouldNot: cfg.trigger.shouldNot || [] } : null;
+  const matrix = cfg.matrix && cfg.matrix.length ? cfg.matrix.map((m) => ({ executorModel: m.executorModel, effort: m.effort || null })) : null;
+  // 成本估算（見檔頭第 5 節公式）
+  const casesN = cfg.cases.length, armsN = cfg.arms.length || 1, runsN = Number(cfg.runs) || 0;
+  const executions = casesN * armsN * runsN, gradings = executions;
+  const isolationChecks = cfg.__baselineOnly ? 2 : 4, graderSelfCheck = 2;
+  const triggerRuns = trigger ? (trigger.should.length + trigger.shouldNot.length) * Number(trigger.runs || 0) : 0;
+  const matrixCells = (matrix && matrix.length) || 1;
+  const totalCalls = (executions + gradings + isolationChecks + graderSelfCheck) * matrixCells + triggerRuns * matrixCells;
+  const probeCases = cfg.cases.filter((c) => c.type === 'pressure' || c.type === 'negative').length;
+  const minCallsIfStop = ((casesN * runsN * 2) + (probeCases * Math.max(0, armsN - 1) * runsN * 2) + isolationChecks + graderSelfCheck) * matrixCells;
+  const formula = `${casesN} 題 × ${armsN} 組 × ${runsN} 次 = ${executions} 次執行＋${gradings} 次評分；已知答案檢查 ${isolationChecks} 次、評分者自證 ${graderSelfCheck} 次${triggerRuns ? `；觸發題 ${triggerRuns} 次（只在 --with-trigger 才花）` : ''}${matrixCells > 1 ? `；矩陣 ${matrixCells} 格` : ''} → 合計 ${totalCalls} 次`;
+  const cost = { cases: casesN, arms: armsN, runs: runsN, executions, gradings, isolationChecks, graderSelfCheck, triggerRuns, matrixCells, totalCalls, minCallsIfStop, formula };
+  // 鎖定狀態
+  const lockPath = path.join(dir, 'lock.json');
+  let lock;
+  if (!fs.existsSync(lockPath)) lock = { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] };
+  else {
+    const v = verifyLock(cfg, lockPath);
+    lock = v.ok
+      ? { state: 'locked', lockedAt: v.lockedAt, relocks: v.relocks, engineAtLock: v.engineAtLock, diffs: [] }
+      : { state: 'mismatch', lockedAt: v.lockedAt, relocks: v.relocks, engineAtLock: v.engineAtLock, diffs: v.diffs };
+  }
+  // 預先登錄
+  const preregPath = path.join(dir, 'pre-registration.md');
+  let prereg;
+  if (fs.existsSync(preregPath)) {
+    const markdown = fs.readFileSync(preregPath, 'utf8');
+    const sn = extractSayNotSay(markdown);
+    prereg = { exists: true, path: preregPath, markdown, say: sn.say, notSay: sn.notSay };
+  } else prereg = { exists: false, path: preregPath, markdown: null, say: null, notSay: null };
+  // 核可前自檢（引擎判得了的部分；判不了的五條見核可頁與 SKILL.md）
+  const hasFamily = (fam) => cfg.assertions.some((a) => a.family === fam);
+  const hasType = (ty) => cfg.cases.some((c) => c.type === ty);
+  let promptLeak = null;
+  if (!cfg.__baselineOnly && cfg.skill.name) { const low = String(cfg.skill.name).toLowerCase(); promptLeak = cfg.cases.some((c) => (c.__prompt || '').toLowerCase().includes(low)); }
+  const checks = [
+    { id: 'prereg-exists', ok: prereg.exists, text: prereg.exists ? '找得到 pre-registration.md。' : '找不到 pre-registration.md——預先登錄還沒寫。' },
+    { id: 'say-notsay-found', ok: !prereg.exists ? null : (prereg.say != null || prereg.notSay != null), text: !prereg.exists ? '沒有 pre-registration.md，這條不適用。' : (prereg.say != null || prereg.notSay != null) ? '預先登錄裡找得到「能說／不能說」的段落。' : '預先登錄裡沒有標題含「能說」或「不能說」的段落。' },
+    { id: 'has-gate', ok: hasFamily('gate'), text: hasFamily('gate') ? '題組裡有前置檢查（gate）。' : '題組裡沒有前置檢查（gate）——沒有基本格式先擋一手。' },
+    { id: 'has-trap', ok: hasType('trap'), text: hasType('trap') ? '有陷阱題。' : '沒有陷阱題。' },
+    { id: 'has-clean', ok: hasType('clean'), text: hasType('clean') ? '有乾淨對照題。' : '沒有乾淨對照題。' },
+    { id: 'has-negative', ok: hasType('negative'), text: hasType('negative') ? '有負向對照題。' : '沒有負向對照題。' },
+    { id: 'runs-at-least-3', ok: cfg.runs >= 3, text: cfg.runs >= 3 ? `每組每題跑 ${cfg.runs} 次，≥3。` : `每組每題只跑 ${cfg.runs} 次，少於建議的 3 次。` },
+    { id: 'prompt-mentions-skill-name', ok: cfg.__baselineOnly ? null : !promptLeak, text: cfg.__baselineOnly ? '沒有受測 skill，這條不適用。' : promptLeak ? '題目指令裡出現了受測 skill 的名字——共用指令可能洩題。' : '題目指令裡沒有出現受測 skill 的名字。' },
+    { id: 'materials-exist', ok: true, text: '材料檔都存在（讀不到的話這裡也跑不到）。' },
+    { id: 'lock-consistent', ok: lock.state === 'none' ? null : lock.state === 'locked', text: lock.state === 'none' ? '還沒鎖定，這條不適用。' : lock.state === 'locked' ? '目前檔案跟鎖定時的雜湊一致。' : `目前檔案跟鎖定時不一致：${lock.diffs.join('、')}` },
+  ];
+  return {
+    kind: 'preview', engine: ENGINE_VERSION, generatedAt: new Date().toISOString(), name: cfg.name,
+    gaugeFile: cfg.__file, gaugeDir: dir,
+    skill, baselineOnly: cfg.__baselineOnly, arms, conditions, cases, assertions, trigger, matrix, cost, lock, prereg, checks,
+  };
+}
+
+function openFile(file) {
+  try {
+    const platform = process.platform;
+    const [cmd, cargs] = platform === 'win32' ? ['cmd', ['/c', 'start', '', file]] : platform === 'darwin' ? ['open', [file]] : ['xdg-open', [file]];
+    const c = spawn(cmd, cargs, { detached: true, stdio: 'ignore' });
+    c.on('error', (e) => log(`⚠ 開啟失敗（可忽略，手動開這個檔案就好）：${e?.message || e}`));
+    c.unref();
+  } catch (e) { log(`⚠ 開啟失敗（可忽略，手動開這個檔案就好）：${e?.message || e}`); }
+}
+
 // ---------- 主程式 ----------
-const COMMANDS = ['check-isolation', 'lock', 'baseline', 'trigger', 'run', 'grade', 'report', 'all', 'matrix', 'matrix-report', 'describe', 'html', 'history', 'compare'];
+const COMMANDS = ['check-isolation', 'lock', 'baseline', 'trigger', 'run', 'grade', 'report', 'all', 'matrix', 'matrix-report', 'describe', 'html', 'preview', 'history', 'compare'];
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
   if (!COMMANDS.includes(cmd)) die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
-  const needCfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'matrix', 'matrix-report', 'describe', 'history'].includes(cmd) || (cmd === 'compare' && args.config);
+  const needCfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'matrix', 'matrix-report', 'describe', 'history', 'preview'].includes(cmd) || (cmd === 'compare' && args.config);
   const cfg = needCfg ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
   if (cfg && args.effort) { if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`); cfg.executorEffort = args.effort; }
 
@@ -1237,6 +1383,20 @@ async function main() {
     { const first = combos[0]; const e = fs.existsSync(path.join(outDir, first.slug, 'effective.json')) ? readJSON(path.join(outDir, first.slug, 'effective.json')) : null; if (e?.runs) cfg.runs = Number(e.runs); }
     const m = buildMatrix(cfg, outDir, combos); writeJSON(path.join(outDir, 'matrix.json'), m); fs.writeFileSync(path.join(outDir, 'matrix.md'), matrixMarkdown(m)); await writeHtml(outDir, m, 'matrix');
     console.log(fs.readFileSync(path.join(outDir, 'matrix.md'), 'utf8')); return;
+  }
+  if (cmd === 'preview') {
+    const dir = cfg.__dir;
+    const data = buildPreview(cfg, { gaugeDir: dir });
+    const R = await loadRender();
+    if (!R || typeof R.renderPreviewHtml !== 'function') die('找不到或載入不了 render.mjs——preview 需要它才能出頁面（沒有它就退回把 pre-registration.md 全文印給人看）');
+    let html;
+    try { html = R.renderPreviewHtml(data, {}); } catch (e) { die(`preview.html 產生失敗：${e?.message || e}`); }
+    const outPath = path.resolve(args.out || path.join(dir, 'preview.html'));
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, html);
+    console.log(`→ ${outPath}`);
+    if (args.open) openFile(outPath);
+    return;
   }
 
   const claudeVersion = await new Promise((res) => { const c = spawn(CLAUDE_CMD[0], [...CLAUDE_CMD.slice(1), '--version'], { shell: IS_WIN }); let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => res(o.trim() || null)); c.on('error', () => res(null)); });
@@ -1340,5 +1500,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown };
+export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));

@@ -13,3 +13,7 @@ gauge/*/runs/
 exercises/fixtures/*/gauge/runs/
 exercises/fixtures/*/gauge/history.jsonl
 exercises/fixtures/*/gauge/lock.prev-*.json
+
+# 核可頁（preview）產出的 HTML 不進 repo（跑一次就有，跟 report.html 同類）
+gauge/*/preview.html
+exercises/fixtures/*/gauge/preview.html

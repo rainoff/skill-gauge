@@ -74,6 +74,16 @@ const armSay = (a) => {
 const armHeadHtml = (a) =>
   ARM_LABEL[a] ? `${esc(ARM_LABEL[a])}<span class="id">${esc(a)}</span>` : `<span class="id">${esc(a)}</span>`;
 
+// 斷言的顯示文字：有 label 就顯示 label（給人看的白話版），text（給評分者的判斷句）放 title 屬性；沒有 label 就顯示 text
+function assertionDispHtml(o) {
+  const meta = asObj(o);
+  const label = nz(meta.label), text = nz(meta.text);
+  const disp = label != null ? label : text;
+  if (disp == null) return '';
+  const title = label != null && text != null && label !== text ? ` title="${esc(txt(text))}"` : '';
+  return `<div class="small dim"${title}>${esc(txt(disp))}</div>`;
+}
+
 // ---------- HTML 骨架 ----------
 const LIGHT_TOKENS = `
   color-scheme: light;
@@ -726,7 +736,7 @@ function secAssertionGrid(r, arms) {
     const o = asObj(x);
     const unscored = FAMILY_UNSCORED.has(txt(o.family));
     const famCell = `${esc(familyLabel(o.family))}${unscored ? '<span class="id">不計分</span>' : ''}`;
-    const idCell = `<div class="wide"><code>${esc(id)}</code>${nz(o.text) ? `<div class="small dim">${esc(txt(o.text))}</div>` : ''}</div>`;
+    const idCell = `<div class="wide"><code>${esc(id)}</code>${assertionDispHtml(o)}</div>`;
     return [idCell, famCell, ...arms.map((a) => ({ td: heatCell(asObj(o.arms)[a], { unscored }) }))];
   });
   const inner =
@@ -1101,7 +1111,7 @@ function runDetails(run, assertions) {
     const meta = asObj(asObj(assertions)[txt(v.id)]);
     const unscored = FAMILY_UNSCORED.has(txt(meta.family));
     return [
-      `<div class="wide"><code>${esc(txt(v.id))}</code>${nz(meta.text) ? `<div class="small dim">${esc(txt(meta.text))}</div>` : ''}<span class="id">${esc(familyLabel(meta.family))}${unscored ? '／不計分' : ''}</span></div>`,
+      `<div class="wide"><code>${esc(txt(v.id))}</code>${assertionDispHtml(meta)}<span class="id">${esc(familyLabel(meta.family))}${unscored ? '／不計分' : ''}</span></div>`,
       v.pass === null ? '<span class="muted">不算分（判不出來）</span>' : v.pass ? '<strong>通過</strong>' : '<strong>不通過</strong>',
       nz(v.evidence) ? `<blockquote>${esc(txt(v.evidence))}</blockquote>` : '<span class="muted">評分沒有留下引句</span>',
     ];
@@ -1422,14 +1432,325 @@ ${nz(best.description) ? `<pre>${esc(txt(best.description))}</pre>` : '<p class=
 }
 
 // ============================================================
+// mdToHtml — 最小、安全、不會炸的 markdown → HTML（給核可頁與預先登錄全文用）
+// ============================================================
+// 行內語法：先跳脫再處理，`**粗體**`／`` `code` ``
+function inlineMd(s) {
+  let x = esc(s);
+  x = x.replace(/`([^`]+)`/g, '<code>$1</code>');
+  x = x.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  return x;
+}
+export function mdToHtml(md) {
+  try {
+    const src = txt(md);
+    if (!src) return '';
+    const lines = src.replace(/\r\n/g, '\n').split('\n');
+    const out = [];
+    let para = [];
+    const flushPara = () => { if (para.length) { out.push(`<p>${inlineMd(para.join(' '))}</p>`); para = []; } };
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      // 圍籬程式碼區塊
+      if (/^```/.test(line)) {
+        flushPara();
+        const buf = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++; // 跳過結束的 ```（沒有結束也安全：i 會超出陣列長度，迴圈自然結束）
+        out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`);
+        continue;
+      }
+      // ATX 標題
+      const h = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (h) { flushPara(); const lvl = h[1].length; out.push(`<h${lvl}>${inlineMd(h[2].trim())}</h${lvl}>`); i++; continue; }
+      // pipe 表格：標頭列 + 分隔列（---）
+      if (/\|/.test(line) && line.trim() && lines[i + 1] && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+        flushPara();
+        const splitRow = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+        const head = splitRow(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) { rows.push(splitRow(lines[i])); i++; }
+        out.push(`<table><thead><tr>${head.map((c) => `<th>${inlineMd(c)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${inlineMd(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+        continue;
+      }
+      // 無序清單
+      if (/^\s*[-*]\s+/.test(line)) {
+        flushPara();
+        const items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, '')); i++; }
+        out.push(`<ul>${items.map((x) => `<li>${inlineMd(x)}</li>`).join('')}</ul>`);
+        continue;
+      }
+      // 有序清單
+      if (/^\s*\d+[.)]\s+/.test(line)) {
+        flushPara();
+        const items = [];
+        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.)]\s+/, '')); i++; }
+        out.push(`<ol>${items.map((x) => `<li>${inlineMd(x)}</li>`).join('')}</ol>`);
+        continue;
+      }
+      // 引用
+      if (/^\s*>\s?/.test(line)) {
+        flushPara();
+        const items = [];
+        while (i < lines.length && /^\s*>\s?/.test(lines[i])) { items.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+        out.push(`<blockquote>${inlineMd(items.join(' '))}</blockquote>`);
+        continue;
+      }
+      // 空行分段
+      if (!line.trim()) { flushPara(); i++; continue; }
+      // 其餘：累積成段落
+      para.push(line.trim());
+      i++;
+    }
+    flushPara();
+    return out.join('\n');
+  } catch {
+    return `<pre>${esc(txt(md))}</pre>`;
+  }
+}
+
+// ============================================================
+// renderPreviewHtml — 核可頁：核可對象是檔案，這一頁只是把 gauge.json＋pre-registration.md
+// 整理成人看得懂的樣子，不需要跑模型就能出，給人核可用
+// ============================================================
+const PREVIEW_CHECK_LABEL = {
+  'prereg-exists': 'pre-registration.md',
+  'say-notsay-found': '能說／不能說',
+  'has-gate': '前置檢查',
+  'has-trap': '陷阱題',
+  'has-clean': '乾淨對照題',
+  'has-negative': '負向對照題',
+  'runs-at-least-3': '次數 ≥3',
+  'prompt-mentions-skill-name': '共用指令沒洩題',
+  'materials-exist': '材料檔存在',
+  'lock-consistent': '鎖定一致',
+};
+function previewCheckChip(ok) {
+  return ok === true ? '<span class="chip ok">✓</span>' : ok === false ? '<span class="chip bad">⚠</span>' : '<span class="chip">–</span>';
+}
+function previewLockChip(lock) {
+  const st = txt(asObj(lock).state);
+  return st === 'locked' ? chip('已鎖定', 'ok') : st === 'mismatch' ? chip('已鎖定但不一致', 'bad') : chip('未鎖定', 'warn');
+}
+function previewLockLine(lock) {
+  const l = asObj(lock);
+  if (l.state === 'locked') return `已鎖定${nz(l.lockedAt) ? `（${esc(txt(l.lockedAt))}）` : ''}`;
+  if (l.state === 'mismatch') return '已鎖定但目前檔案跟鎖定時不一致';
+  return '未鎖定';
+}
+
+function secPreviewIntro(d) {
+  const skill = asObj(d.skill);
+  const cond = asObj(d.conditions);
+  const cost = asObj(d.cost);
+  const lock = asObj(d.lock);
+  const checks = asArr(d.checks);
+  const okN = checks.filter((c) => asObj(c).ok === true).length;
+  const warnN = checks.filter((c) => asObj(c).ok === false).length;
+  const skillLine = d.baselineOnly
+    ? '（沒有受測 skill——只量基準組做不做得到）'
+    : `<code>${esc(nz(txt(skill.name)) || '?')}</code>${nz(skill.path) ? `（<code>${esc(txt(skill.path))}</code>）` : ''}`;
+  const p = `<p>量 ${skillLine}——${esc(fmtOr(asArr(d.cases).length))} 題 × ${esc(fmtOr(asArr(d.arms).length))} 組 × ${esc(fmtOr(cond.runs))} 次；估 ${esc(fmtOr(cost.totalCalls))} 次模型呼叫（停案時最少 ${esc(fmtOr(cost.minCallsIfStop))} 次）；鎖定狀態：${previewLockLine(lock)}；自檢 ✓ ${okN} ／ ⚠ ${warnN}。</p>`;
+  const chips = [
+    nz(cond.executorModel) ? chip(`執行模型 ${txt(cond.executorModel)}`) : null,
+    nz(cond.executorEffort) ? chip(`effort ${txt(cond.executorEffort)}`) : null,
+    nz(cond.judgeModel) ? chip(`評分模型 ${txt(cond.judgeModel)}`) : null,
+    num(cond.runs) !== null ? chip(`每題每組 ${cond.runs} 次`) : null,
+    asArr(d.arms).length ? chip(`${asArr(d.arms).length} 組`) : null,
+    previewLockChip(lock),
+  ].filter(Boolean).join('');
+  return section('intro', '先看這裡', p + `<p class="chips">${chips}</p>`);
+}
+
+function secPreviewChecks(d) {
+  const checks = asArr(d.checks);
+  if (!checks.length) return null;
+  const rows = checks.map((c) => { const o = asObj(c); return [previewCheckChip(o.ok), esc(PREVIEW_CHECK_LABEL[txt(o.id)] || txt(o.id)), esc(txt(o.text))]; });
+  const inner = table(['', '項目', '說明'], rows) +
+    `<p class="note">這五條引擎判不了，請你看完題目後自己確認：</p>
+<ul class="keypoints">
+<li>①題目來自你的翻車案例或 skill 自己的宣稱</li>
+<li>②兩組共用的指令沒有洩題（不含 skill 的核心指令詞）</li>
+<li>③前置檢查兩組都做得到（不是 skill 教的格式）</li>
+<li>④能說／不能說你同意</li>
+<li>⑤成本可以接受</li>
+</ul>`;
+  return section('checks', '核可前自檢', inner);
+}
+
+function secPreviewConditions(d) {
+  const cond = asObj(d.conditions);
+  const rows = [
+    ['執行模型', esc(nz(txt(cond.executorModel)) || '（帳號預設）')],
+    ['effort', nz(cond.executorEffort) ? `<code>${esc(txt(cond.executorEffort))}</code>` : '<span class="muted">未指定</span>'],
+    ['評分模型', esc(nz(txt(cond.judgeModel)) || '?')],
+    ['每題每組次數', esc(fmtOr(cond.runs))],
+    ['可用工具', asArr(cond.allowedTools).length ? asArr(cond.allowedTools).map((x) => `<code>${esc(txt(x))}</code>`).join('、') : '<span class="muted">未限制</span>'],
+  ];
+  const armRows = asArr(d.arms).map((a) => { const o = asObj(a); return [`<code>${esc(txt(o.name))}</code>`, esc(txt(o.what)), nz(o.path) ? `<code>${esc(txt(o.path))}</code>` : '<span class="muted">—</span>']; });
+  const inner = table(['條件', '值'], rows) + (armRows.length ? table(['組', '拿到什麼', '路徑'], armRows) : '');
+  return section('conditions', '條件與各組', inner);
+}
+
+function secPreviewCases(d) {
+  const cases = asArr(d.cases);
+  if (!cases.length) return null;
+  const rows = cases.map((c) => {
+    const o = asObj(c);
+    return [`<code>${esc(txt(o.id))}</code>`, esc(nz(txt(o.typeLabel)) || nz(txt(o.type)) || '—'), String(asArr(o.materials).length), String(asArr(o.assertions).length), nz(o.note) ? esc(txt(o.note)) : '<span class="muted">—</span>'];
+  });
+  const overview = table(['題', '題型', '材料', '檢查項數', '備註'], rows);
+  const details = cases.map((c) => {
+    const o = asObj(c);
+    const summary = `<code>${esc(txt(o.id))}</code> ${esc(nz(txt(o.typeLabel)) || nz(txt(o.type)) || '')}${nz(o.note) ? ` — ${esc(txt(o.note))}` : ''}`;
+    const materials = asArr(o.materials).map((m) => {
+      const mo = asObj(m);
+      const bytesTxt = num(mo.bytes) !== null ? `（${esc(mo.bytes)} bytes）` : '';
+      const body = mo.head === null || mo.head === undefined
+        ? '<p class="muted">（二進位或讀不出來，沒有內容可顯示）</p>'
+        : `<pre>${esc(txt(mo.head))}</pre>${mo.truncated ? '<p class="note">…（只顯示前 600 字）</p>' : ''}`;
+      return `<h4>${esc(txt(mo.name))}${bytesTxt}</h4>${body}`;
+    }).join('');
+    const pr = asObj(o.pressure);
+    const pressureHtml = o.pressure
+      ? `<h4>壓力測試</h4><dl class="kv">
+<dt>規則</dt><dd>${esc(txt(pr.rule))}</dd>
+<dt>壓力</dt><dd>${asArr(pr.pressures).map((x) => chip(txt(x))).join('') || '<span class="muted">—</span>'}</dd>
+<dt>預期行為</dt><dd>${esc(EXPECTED_BEHAVIOR[txt(pr.expectedBehavior)] || txt(pr.expectedBehavior) || '—')}</dd>
+<dt>預期選項</dt><dd>${nz(pr.expectedOption) ? esc(txt(pr.expectedOption)) : '<span class="muted">—</span>'}</dd>
+</dl>`
+      : '';
+    return `<details><summary>${summary}</summary><div class="detail-body">
+<h4>兩組共用的指令（逐字）</h4>
+<pre>${esc(txt(o.prompt))}</pre>
+${asArr(o.materials).length ? `<h4>材料</h4>${materials}` : ''}
+${pressureHtml}
+</div></details>`;
+  }).join('');
+  return section('cases', '題組', overview + details);
+}
+
+function secPreviewAssertions(d) {
+  const list = asArr(d.assertions);
+  if (!list.length) return null;
+  const order = ['gate', 'fact', 'judgment', 'orientation'];
+  const parts = order.map((fam) => {
+    const items = list.filter((a) => asObj(a).family === fam);
+    if (!items.length) return '';
+    const rows = items.map((a) => {
+      const o = asObj(a);
+      const label = nz(o.label), text = nz(o.text);
+      const disp = label != null
+        ? `${esc(txt(label))}${text != null && text !== label ? `<div class="small dim">${esc(txt(text))}</div>` : ''}`
+        : esc(txt(text));
+      return [`<code>${esc(txt(o.id))}</code>`, disp, String(asArr(o.cases).length), o.scored ? '✓' : '–', o.implicit ? '✓' : '–'];
+    });
+    return `<h3>${esc(nz(txt(asObj(items[0]).familyLabel)) || fam)}</h3>` + table(['id', '文字', '適用題', '計分？', '自動加入？'], rows);
+  }).join('');
+  return section('assertions', '檢查項', parts);
+}
+
+function secPreviewTrigger(trig) {
+  if (!isObj(trig)) return null;
+  const t = asObj(trig);
+  const should = asArr(t.should), shouldNot = asArr(t.shouldNot);
+  const listHtml = (arr) => (arr.length ? `<ul>${arr.map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '<p class="muted">（沒有列）</p>');
+  const inner = `<h3>該觸發（${should.length}）</h3>${listHtml(should)}<h3>不該觸發（${shouldNot.length}）</h3>${listHtml(shouldNot)}`;
+  return section('trigger', '觸發題', inner, `每題 ${esc(fmtOr(t.runs))} 次；只在 <code>--with-trigger</code> 或 <code>describe</code> 時才跑。`);
+}
+
+function secPreviewMatrix(matrix) {
+  const cells = asArr(matrix);
+  if (!cells.length) return null;
+  const rows = cells.map((c) => { const o = asObj(c); return [esc(nz(txt(o.executorModel)) || '?'), nz(o.effort) ? esc(txt(o.effort)) : '<span class="muted">—</span>']; });
+  return section('matrix', '矩陣', table(['執行模型', 'effort'], rows));
+}
+
+function secPreviewCost(cost) {
+  const c = asObj(cost);
+  if (!Object.keys(c).length) return null;
+  const rows = [
+    ['執行', esc(fmtOr(c.executions))],
+    ['評分', esc(fmtOr(c.gradings))],
+    ['已知答案檢查', esc(fmtOr(c.isolationChecks))],
+    ['評分者自證', esc(fmtOr(c.graderSelfCheck))],
+    ['觸發（只在 --with-trigger 才花）', esc(fmtOr(c.triggerRuns))],
+    ['矩陣格數', esc(fmtOr(c.matrixCells))],
+    ['合計', `<strong>${esc(fmtOr(c.totalCalls))}</strong>`],
+  ];
+  const inner = table(['項目', '次數'], rows) +
+    (nz(c.formula) ? `<p class="note">${esc(txt(c.formula))}</p>` : '') +
+    `<p class="note">引擎預設先跑不帶 skill 那組，全過就停案，最少只花 ${esc(fmtOr(c.minCallsIfStop))} 次。</p>`;
+  return section('cost', '成本估算', inner);
+}
+
+function secPreviewSayNotSay(prereg) {
+  const p = asObj(prereg);
+  if (!p.exists) return null;
+  if (p.say == null && p.notSay == null) return section('say-notsay', '能說／不能說', `<p class="bar">預先登錄裡找不到標題含「能說」「不能說」的段落——核可前請補上。</p>`);
+  const inner = [
+    p.say != null ? `<div class="bar"><strong>能說</strong>${mdToHtml(p.say)}</div>` : '',
+    p.notSay != null ? `<div class="bar"><strong>不能說</strong>${mdToHtml(p.notSay)}</div>` : '',
+  ].join('');
+  return section('say-notsay', '能說／不能說', inner);
+}
+
+function secPreviewFull(prereg) {
+  const p = asObj(prereg);
+  if (!p.exists) return section('prereg-full', '預先登錄全文', `<p class="bar">找不到 pre-registration.md——lock 會拒絕，除非 --allow-missing-prereg。</p>`);
+  return section('prereg-full', '預先登錄全文', `<details open><div class="detail-body">${mdToHtml(p.markdown)}</div></details>`);
+}
+
+export function renderPreviewHtml(data, opts = {}) {
+  const d = asObj(data);
+  const name = nz(txt(d.name)) || '（未命名）';
+  const title = txt(opts.title || `skill-gauge 核可頁 — ${name}`);
+  const cond = asObj(d.conditions);
+  const lock = asObj(d.lock);
+
+  const chips = [];
+  if (nz(d.generatedAt)) chips.push(chip(`產生時間 ${txt(d.generatedAt)}`));
+  if (nz(cond.executorModel)) chips.push(chip(`執行模型 ${txt(cond.executorModel)}${nz(cond.executorEffort) ? ` ／ effort ${txt(cond.executorEffort)}` : ''}`));
+  if (nz(cond.judgeModel)) chips.push(chip(`評分模型 ${txt(cond.judgeModel)}`));
+  if (asArr(d.arms).length) chips.push(chip(`${asArr(d.arms).length} 組`));
+  if (nz(d.engine)) chips.push(chip(`量測引擎 ${txt(d.engine)}`));
+  chips.push(previewLockChip(lock));
+
+  const sections = [
+    secPreviewIntro(d),
+    secPreviewChecks(d),
+    secPreviewConditions(d),
+    secPreviewCases(d),
+    secPreviewAssertions(d),
+    secPreviewTrigger(d.trigger),
+    secPreviewMatrix(d.matrix),
+    secPreviewCost(d.cost),
+    secPreviewSayNotSay(d.prereg),
+    secPreviewFull(d.prereg),
+  ];
+
+  const footer = [
+    `<p>這一頁不是核可對象——核可的是檔案。說「可以」之後執行 <code>lock</code>，鎖的是 gauge.json、pre-registration.md、題目、材料、skill 的雜湊；這一頁改了不算數，檔案改了要重出核可頁、重新核可、<code>--relock</code>。</p>`,
+    `<p>這一頁由 skill-gauge 的 <code>render.mjs</code> 直接產生：沒有連任何外部資源，可以離線開。</p>`,
+  ].join('\n');
+
+  return page({ title, h1: title, chipsHtml: chips.join(''), sections, footerHtml: footer });
+}
+
+// ============================================================
 // 分派與 CLI
 // ============================================================
 export function detectKind(data) {
   const d = asObj(data);
   const k = txt(d.kind);
-  if (k === 'matrix' || k === 'report' || k === 'describe') return k;
+  if (k === 'matrix' || k === 'report' || k === 'describe' || k === 'preview') return k;
   if (Array.isArray(d.combos)) return 'matrix';
   if (Array.isArray(d.rounds) || isObj(d.split)) return 'describe';
+  if (isObj(d.prereg) && Array.isArray(d.cases) && !d.totals) return 'preview';
   return 'report';
 }
 
@@ -1437,6 +1758,7 @@ export function renderHtml(data, opts = {}) {
   const kind = detectKind(data);
   if (kind === 'matrix') return renderMatrixHtml(data, opts);
   if (kind === 'describe') return renderDescribeHtml(data, opts);
+  if (kind === 'preview') return renderPreviewHtml(data, opts);
   return renderReportHtml(data, opts);
 }
 

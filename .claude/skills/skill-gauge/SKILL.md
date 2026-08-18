@@ -36,29 +36,37 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 - `pre-registration.md`：照模板填。條件四格、受測物、兩組定義（帶 skill 那組多的只有 `.claude/skills/<name>/`）、題組表、四類檢查項、規模（每組至少 3 次，寫死）、**能說／不能說現在寫死**。對照組誠實檢查：共用指令不含 skill 的核心指令詞；含了就在限制段寫「量到的是剩下的那一點差別」。
 - `gauge.json`（引擎讀的，欄位見下）。**前置檢查（gate）必須兩組都做得到**——例如「有整理成會議記錄」可以，「有三區結構」不行（那是 skill 教的格式，會把不帶 skill 那組整批作廢）。事實／判斷兩類每條要能二元判定、能指出證據；取向觀察不計分。
 - `results.md`：只填條件宣告與限制段骨架，數據留空。
+- 語言：**執行檔用英文**——pre-registration.md（除了「能說／不能說」那一段用使用者的語言，因為結果會逐字引用）、gauge.json 的 note／id／slug、壓力題的 rule 與 pressures、觸發題的說明。**題目指令與材料維持真實任務的語言**：它們是受測刺激，使用者平常怎麼下指令就怎麼寫，不翻譯。檢查項的 `text` 是給評分者的判斷句，用英文；同一條再給一句使用者語言的 `label`（核可頁與報告顯示 label，評分只讀 text）。給人看的東西——核可頁、報告、你在對話裡說的話——用使用者的語言。
 
 `gauge.json` 欄位（範例：`exercises/fixtures/meeting-notes/gauge/gauge.json`）：
 ```
 name, skill{name, path}, executorModel, executorEffort(可選 low|medium|high|xhigh|max), judgeModel, runs, root(可 null),
 cases[{id, type: trap|clean|negative|pressure, promptFile, materials[], assertions[ids], note,
        （pressure 專用）rule, pressures[], expectedBehavior: comply|exempt, expectedOption(可選)}],
-assertions[{id, family: gate|fact|judgment|orientation, text, cases[]}],
+assertions[{id, family: gate|fact|judgment|orientation, text, label(可選), cases[]}],
 trigger{runs, should[…該觸發的指令], shouldNot[…不該觸發的鄰近指令]}   ← 可選
 matrix[{executorModel, effort}]   ← 可選：多模型×effort 矩陣的格
 arms[{name, skill:true|false} | {name, skillPath}]   ← 可選：第三組
 ```
 
-## 第 3 步：停——給人核可，再鎖定（不可跳過）
+## 第 3 步：停——出核可頁給人看，說「可以」才鎖定（不可跳過）
 
-把 `pre-registration.md` 全文印出，問：「這份預先登錄可以嗎？可以我才鎖定並開跑；改了要重印。」使用者說可以之前，**不開跑、不寫任何結論**。核可後執行：
+不要把 pre-registration.md 全文貼在對話裡——那是執行檔，給引擎與你自己用的；給人核可的是一頁整理過的核可頁：
+```
+node <SKILL_DIR>/scripts/gauge.mjs preview --config gauge/<dir>/gauge.json --open
+```
+它把 gauge.json＋pre-registration.md 整理成一頁：條件與各組、每題兩組共用的指令與材料、四類檢查項、觸發題、成本估算（含停案時最少花多少）、能說／不能說、核可前自檢（引擎判得了的自動打勾，判不了的五條列給人勾）。
+帶使用者看這一頁，只講三件事：題目是不是他的翻車、對照組拿到的指令有沒有洩題、能說／不能說他同不同意；然後問：「這份預先登錄可以嗎？可以我才鎖定並開跑；改了要重出核可頁、重新核可。」
+使用者說可以之前，**不開跑、不寫任何結論**。核可對象是檔案不是頁面：說可以之後執行
 ```
 node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 ```
-（鎖住預先登錄、gauge.json、題目、材料、skill 的雜湊；之後任何一樣改了，引擎會拒跑。要改就重新核可、重新 lock。）
+（鎖住預先登錄、gauge.json、題目、材料、skill 的雜湊；之後任何一樣改了，引擎會拒跑。要改就重出核可頁、重新核可、`--relock`。）
+環境裡有可視化 skill（例如 viz-explain、artifact-design）的話，可以再把核可頁的內容做成一頁互動說明給人看——選配，不取代檔案。`preview` 出不來時退回把 pre-registration.md 全文印出。
 
 ## 第 4 步：跑（先報成本，再執行）
 
-先算給使用者看：題數 × 組數（兩組或三組）× 次數 ＝ 幾次執行，每次約 10 秒到幾分鐘（看 skill）；加上同樣次數的評分、已知答案檢查 4 次、評分者自證 2 次；有觸發測試再加題數 × 次數；矩陣再乘格數。使用者說跑再跑。
+核可頁已算過；照它報——題數 × 組數 × 次數＝幾次執行＋同樣次數的評分、已知答案檢查、評分者自證、（有觸發測試才花的）觸發次數、矩陣格數，核可頁的「成本估算」都列好了，每次約 10 秒到幾分鐘（看 skill）。使用者說跑再跑。
 
 - **Claude Code**：一行跑完（已知答案檢查 → **不帶 skill 那組先跑滿、盲評、套停案規則** → 帶 skill 那組 → 盲評 → 報告）：
   ```

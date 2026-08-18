@@ -4,7 +4,7 @@ process.env.GAUGE_NO_MAIN = '1';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown } = await import('./gauge.mjs');
+const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay } = await import('./gauge.mjs');
 let n = 0, bad = 0; const t = (name, cond) => { n++; if (!cond) { bad++; console.log('✗', name); } else console.log('✓', name); };
 
 // 祖先掃描：有 .claude 的上層要被抓到，自己這層不算
@@ -118,6 +118,36 @@ const dfake = { skill: 's', triggerModel: 'm', proposerModel: 'p', runsPerQuery:
 const dmd = describeMarkdown(dfake);
 t('描述優化 markdown：最佳輪與逐題', /最佳（第 1 輪/.test(dmd) && /held-out/.test(dmd) && /2\/2 ✓/.test(dmd));
 
+// 核可頁：能說／不能說擷取（標題同時含兩邊關鍵字＝整段給 say，notSay 留 null；獨立標題各自擷取）
+t('能說／不能說：合併標題只給 say', (() => { const r = extractSayNotSay('## 能說／不能說（先寫死）\n- 能說 A\n- 不能說 B\n\n## 執行紀律\n其他'); return /能說 A/.test(r.say) && /不能說 B/.test(r.say) && r.notSay === null; })());
+t('能說／不能說：分開標題各自擷取，內文到下一個同層標題為止', (() => { const r = extractSayNotSay('## 能說\n段落一\n\n## 不能說\n段落二\n\n## 其他\n段落三'); return r.say.trim() === '段落一' && r.notSay.trim() === '段落二'; })());
+t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒有相關段落').say === null && extractSayNotSay('# 標題\n沒有相關段落').notSay === null);
+
+// 核可頁：buildPreview 成本數學（hand-computed：5 題 × 3 組 × 2 次，觸發 8+8×2，矩陣 2 格）
+{
+  const fakeCfg = {
+    name: 'fx', __dir: '/nonexistent-sg-preview-dir', __file: '/nonexistent-sg-preview-dir/gauge.json', __baselineOnly: false,
+    skill: { name: 's', path: '../skill/s', __abs: null },
+    arms: [{ name: 'a1' }, { name: 'a2' }, { name: 'a3' }],
+    executorModel: 'm', executorEffort: null, judgeModel: 'j', runs: 2, allowedTools: [],
+    cases: [
+      { id: 'c1', type: 'clean', promptFile: 'c1.md', __prompt: 'p1', __materials: [], assertions: ['x'], note: null },
+      { id: 'c2', type: 'clean', promptFile: 'c2.md', __prompt: 'p2', __materials: [], assertions: ['x'], note: null },
+      { id: 'c3', type: 'pressure', promptFile: 'c3.md', __prompt: 'p3', __materials: [], assertions: ['x'], note: null, rule: 'R', pressures: ['時間'], expectedBehavior: 'comply', expectedOption: null },
+      { id: 'c4', type: 'negative', promptFile: 'c4.md', __prompt: 'p4', __materials: [], assertions: ['x'], note: null },
+      { id: 'c5', type: 'trap', promptFile: 'c5.md', __prompt: 'p5', __materials: [], assertions: ['x'], note: null },
+    ],
+    assertions: [{ id: 'x', family: 'fact', text: 'X' }],
+    trigger: { runs: 2, should: Array(8).fill('q'), shouldNot: Array(8).fill('q') },
+    matrix: [{ executorModel: 'm1' }, { executorModel: 'm2' }],
+  };
+  const pv = buildPreview(fakeCfg, { gaugeDir: '/nonexistent-sg-preview-dir' });
+  t('buildPreview 成本：executions/gradings/isolation/selfcheck/trigger/matrixCells/totalCalls', pv.cost.executions === 30 && pv.cost.gradings === 30 && pv.cost.isolationChecks === 4 && pv.cost.graderSelfCheck === 2 && pv.cost.triggerRuns === 32 && pv.cost.matrixCells === 2 && pv.cost.totalCalls === 196);
+  t('buildPreview：沒有 lock.json → lock.state=none', pv.lock.state === 'none');
+  t('buildPreview：沒有 pre-registration.md → prereg.exists=false', pv.prereg.exists === false);
+  t('buildPreview：checks 含 prereg-exists 且 ok=false', pv.checks.find((c) => c.id === 'prereg-exists')?.ok === false);
+}
+
 // HTML 渲染器（若存在）：三種都能吐出含關鍵字的 HTML、不含外部資源
 try {
   const R = await import('./render.mjs');
@@ -127,6 +157,45 @@ try {
   t('render：報告 HTML 無外部資源', !/(src|href)=["']https?:\/\//.test(h1) && !/@import\s+url\(/.test(h1));
   const h2 = R.renderMatrixHtml(mx, {}); t('render：矩陣 HTML', /m1-default/.test(h2));
   const h3 = R.renderDescribeHtml(dfake, {}); t('render：描述優化 HTML', /held-out|最佳/.test(h3));
+
+  // label 顯示：assertion 有 label 就顯示 label（text 放 title），沒有就照舊顯示 text（回歸）
+  const sampleL = { ...sample, assertions: { x: { family: 'fact', text: 'X 給評分者的原文', label: 'X 給人看的白話', arms: { with: { pass: 1, total: 1 }, without: { pass: 0, total: 1 } } } } };
+  const hL = R.renderReportHtml(sampleL, {});
+  t('render：assertion 有 label 時顯示 label、text 放 title', /X 給人看的白話/.test(hL) && /title="X 給評分者的原文"/.test(hL));
+  t('render：assertion 沒有 label 時照舊顯示 text（回歸不變）', /X<\/div>/.test(h1) || />X</.test(h1));
+
+  // mdToHtml：標題／清單／表格／跳脫／不會炸
+  t('mdToHtml：標題轉 h2', /<h2>/.test(R.mdToHtml('## 標題')));
+  t('mdToHtml：清單轉 li', /<li>/.test(R.mdToHtml('- a\n- b')));
+  t('mdToHtml：表格轉 table', /<table>/.test(R.mdToHtml('| a | b |\n|---|---|\n| 1 | 2 |\n')));
+  t('mdToHtml：<script> 會被跳脫', /&lt;script&gt;/.test(R.mdToHtml('<script>x</script>')) && !/<script>x<\/script>/.test(R.mdToHtml('<script>x</script>')));
+  t('mdToHtml：亂七八糟輸入不會炸', (() => { try { R.mdToHtml(undefined); R.mdToHtml(null); R.mdToHtml(12345); R.mdToHtml('```\n未關閉的圍籬'); R.mdToHtml('| 壞掉的表格\n沒有分隔列'); return true; } catch { return false; } })());
+
+  // renderPreviewHtml：核可頁最小資料
+  const minimalPreview = {
+    kind: 'preview', name: 'fx', generatedAt: 'T', engine: '1.2.0',
+    skill: { name: 's', path: '../skill/s', exists: true, description: 'd' },
+    baselineOnly: false,
+    arms: [
+      { name: 'with', kind: 'skill', what: '受測 skill', path: '../skill/s', description: 'd' },
+      { name: 'without', kind: 'none', what: '什麼都不給', path: null, description: null },
+    ],
+    conditions: { executorModel: 'm', executorEffort: null, judgeModel: 'j', runs: 2, allowedTools: [] },
+    cases: [{ id: 'c1', type: 'clean', typeLabel: '乾淨對照題', promptFile: 'c1.md', prompt: '<script>x</script>', materials: [], assertions: ['x'], note: null, pressure: null }],
+    assertions: [{ id: 'x', family: 'fact', familyLabel: '事實紀律', text: 'X', label: null, scored: true, implicit: false, cases: ['c1'] }],
+    trigger: null, matrix: null,
+    cost: { cases: 1, arms: 2, runs: 2, executions: 2, gradings: 2, isolationChecks: 4, graderSelfCheck: 2, triggerRuns: 0, matrixCells: 1, totalCalls: 16, minCallsIfStop: 10, formula: 'f' },
+    lock: { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] },
+    prereg: { exists: false, path: '/x/pre-registration.md', markdown: null, say: null, notSay: null },
+    checks: [{ id: 'prereg-exists', ok: false, text: '找不到 pre-registration.md。' }],
+  };
+  const hp = R.renderPreviewHtml(minimalPreview, {});
+  t('preview render：含題組／成本估算／核可前自檢', /題組/.test(hp) && /成本估算/.test(hp) && /核可前自檢/.test(hp));
+  t('preview render：含題 id', /c1/.test(hp));
+  t('preview render：prompt 已跳脫', /&lt;script&gt;/.test(hp) && !/<script>x<\/script>/.test(hp));
+  t('preview render：無外部資源', !/(src|href)=["']https?:\/\//.test(hp) && !/@import\s+url\(/.test(hp));
+  t('preview render：detectKind 判成 preview', R.detectKind(minimalPreview) === 'preview');
+  t('preview render：無 kind 但有 prereg＋cases 且無 totals → detectKind=preview', R.detectKind({ prereg: {}, cases: [] }) === 'preview');
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
 fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(mdir, { recursive: true, force: true });
