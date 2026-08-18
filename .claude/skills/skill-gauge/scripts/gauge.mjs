@@ -505,7 +505,7 @@ function buildReport(cfg, outDir) {
     for (const arm of cfg.arms) {
       const armDir = path.join(runsDir, kase.id, arm.name);
       const texts = [];
-      perCase[kase.id][arm.name] = { pass: 0, total: 0, validRuns: 0, invalidRuns: 0, failures: 0 };
+      perCase[kase.id][arm.name] = { pass: 0, total: 0, validRuns: 0, invalidRuns: 0, failures: 0, skillFired: 0, skillFiredKnown: 0 };
       if (!fs.existsSync(armDir)) continue;
       for (const rk of fs.readdirSync(armDir).sort()) {
         const runDir = path.join(armDir, rk);
@@ -513,6 +513,8 @@ function buildReport(cfg, outDir) {
         const gpath = path.join(runDir, 'grading.json');
         const g = fs.existsSync(gpath) ? readJSON(gpath) : null;
         (durations[arm.name] ||= []).push(meta.durationMs); (outTok[arm.name] ||= []).push(meta.outputTokens); (cost[arm.name] ||= []).push(meta.costUsd);
+        if (meta.skillFired === true || meta.skillFired === false) { perCase[kase.id][arm.name].skillFiredKnown++; if (meta.skillFired) perCase[kase.id][arm.name].skillFired++; }
+        if (meta.ok) ((report.__texts ||= {})[kase.id] ||= {})[arm.name] = [ ...(((report.__texts || {})[kase.id] || {})[arm.name] || []), fs.readFileSync(path.join(runDir, 'output.md'), 'utf8') ];
         if (meta.mainModel) (models[arm.name] ||= new Set()).add(meta.mainModel); else for (const m of meta.models || []) (models[arm.name] ||= new Set()).add(m);
         if (!meta.ok || !g || g.harnessFailure) { harnessFailures.push(`${kase.id}/${arm.name}/${rk}`); perCase[kase.id][arm.name].failures++; continue; }
         if (g.gateFailed) { invalid.push(`${kase.id}/${arm.name}/${rk}`); perCase[kase.id][arm.name].invalidRuns++; continue; }
@@ -536,6 +538,25 @@ function buildReport(cfg, outDir) {
     }
   }
   report.cases = cfg.cases.map((c) => ({ id: c.id, type: c.type || null, arms: perCase[c.id] }));
+  // 行為足跡：帶 skill 那組是不是真的載入了 skill？兩組產出差多少（跨組相似度 vs 同組內相似度）
+  const A0 = cfg.arms[0]?.name, B0 = cfg.arms[1]?.name;
+  const fp = { armWith: A0, fired: 0, known: 0, negativeFired: 0, negativeKnown: 0, cases: [] };
+  for (const c of cfg.cases) {
+    const x = perCase[c.id][A0];
+    if (x) { if (c.type === 'negative') { fp.negativeFired += x.skillFired; fp.negativeKnown += x.skillFiredKnown; } else { fp.fired += x.skillFired; fp.known += x.skillFiredKnown; } }
+    const ta = report.__texts?.[c.id]?.[A0] || [], tb = report.__texts?.[c.id]?.[B0] || [];
+    if (ta.length && tb.length) {
+      const cross = []; for (const a of ta) for (const b of tb) cross.push(bigramDice(a, b));
+      const within = []; for (let i = 0; i < ta.length; i++) for (let j = i + 1; j < ta.length; j++) within.push(bigramDice(ta[i], ta[j])); for (let i = 0; i < tb.length; i++) for (let j = i + 1; j < tb.length; j++) within.push(bigramDice(tb[i], tb[j]));
+      const mc = cross.reduce((x, y) => x + y, 0) / cross.length, mw = within.length ? within.reduce((x, y) => x + y, 0) / within.length : null;
+      fp.cases.push({ case: c.id, crossArmSimilarity: +mc.toFixed(3), withinArmSimilarity: mw == null ? null : +mw.toFixed(3) });
+    }
+  }
+  delete report.__texts;
+  report.footprint = fp;
+  if (fp.known && fp.fired < fp.known) report.flags.push(`skill 沒被載入或呼叫：帶 skill 那組（負向對照題除外）${fp.known} 次裡只有 ${fp.fired} 次偵測到 Skill 呼叫或讀取 SKILL.md——先確認 description 與觸發，再談效果`);
+  if (fp.negativeKnown && fp.negativeFired > 0) report.flags.push(`負向對照題誤觸發：不該觸發的題目 ${fp.negativeKnown} 次裡 ${fp.negativeFired} 次 skill 被呼叫`);
+  for (const f of fp.cases) if (f.withinArmSimilarity != null && f.crossArmSimilarity >= f.withinArmSimilarity - 0.02) report.flags.push(`看不出足跡：${f.case} 兩組產出的相似度（${f.crossArmSimilarity}）跟同組內（${f.withinArmSimilarity}）差不多——skill 沒有明顯改變產出`);
   report.assertions = Object.fromEntries(Object.entries(perAssertion).map(([id, arms]) => [id, { family: famOf[id], text: textOf[id], arms }]));
   report.totals = passCount;
   report.invalidRuns = invalid; report.harnessFailures = harnessFailures;
@@ -599,6 +620,7 @@ function reportMarkdown(cfg, r) {
   if (hurt) L.push(`- 有 ${hurt} 條檢查項帶 skill 那組反而較差，逐條看下面的表。`);
   if (sim) L.push(`- 有 ${sim} 個格子的重複 run 幾乎一樣，有效樣本比次數少。`);
   if (bias) L.push(`- 前置檢查作廢集中在某一組，兩組不對等，先修前置檢查再下結論。`);
+  if (r.footprint && r.footprint.known) L.push(`- 有沒有在做事：帶 skill 那組（負向對照題除外）${r.footprint.known} 次裡 ${r.footprint.fired} 次偵測到 skill 被呼叫或讀取${r.footprint.negativeKnown ? `；負向對照題 ${r.footprint.negativeKnown} 次裡 ${r.footprint.negativeFired} 次誤觸發` : ''}；兩組產出相似度 ${r.footprint.cases.map((f) => `${f.case} ${f.crossArmSimilarity}（同組內 ${f.withinArmSimilarity ?? '—'}）`).join('、')}——數字越接近同組內，skill 越沒改變產出。`);
   const cA = r.cost[arms[0]], cB = r.cost[arms[1]];
   if (cA && cB && cA.medianDurationS != null && cB.medianDurationS != null) L.push(`- 成本：${arms[0]} 每次約 ${cA.medianDurationS.toFixed(0)} 秒／${cA.medianOutputTokens ?? '?'} 輸出 token；${arms[1]} 約 ${cB.medianDurationS.toFixed(0)} 秒／${cB.medianOutputTokens ?? '?'}。`);
   if (r.trigger) L.push(`- 觸發：該觸發時 ${r.trigger.should.fired}/${r.trigger.should.n} 次有觸發；不該觸發時 ${r.trigger.shouldNot.fired}/${r.trigger.shouldNot.n} 次誤觸發。`);
