@@ -12,7 +12,7 @@
 //   node scripts/gauge.mjs all     --config <gauge.json> --out <dir> [--with-trigger] [--interleave] [--ignore-stop-rule] [--effort <level>]
 //   （all 預設先跑不帶 skill 那組並套停案規則：每條計分檢查每次都過＝停，不跑帶 skill 那組）
 //   node scripts/gauge.mjs matrix  --config <gauge.json> --out <dir> [--models a,b] [--efforts low,high] [--with-trigger]   （多模型×effort：每格各跑一次 all）
-//   node scripts/gauge.mjs matrix-report --config <gauge.json> --out <dir>          （只重算矩陣總表）
+//   node scripts/gauge.mjs matrix-report --config <gauge.json> --out <dir> [--rebuild-cells]  （重算矩陣總表；--rebuild-cells 連每格 report 一起重出）
 //   node scripts/gauge.mjs lock    … [--relock] [--allow-missing-prereg]              （鎖定不可靜默覆寫；預設要有 pre-registration.md）
 //   node scripts/gauge.mjs describe --config <gauge.json> --out <dir> [--rounds 3] [--runs 3] [--holdout 0.4] [--apply]  （描述優化迴圈：只改 description，held-out 選最佳，預設不寫回）
 //   node scripts/gauge.mjs html    --out <dir>                                       （只重出 report.html）
@@ -908,9 +908,27 @@ async function writeReport(cfg, outDir, { history = true } = {}) {
 }
 
 // ---------- 一次完整量測（all）：已知答案檢查 → [觸發] → 基準組先跑＋盲評＋停案規則 → 帶 skill 組 → 盲評 → 報告 ----------
+// 生效設定：這個輸出目錄實際用的次數／模型／effort／評分模型（CLI 覆蓋後的值），report／matrix-report／html 重出時照這份、不照 gauge.json 預設
+function writeEffective(cfg, outDir, extra = {}) {
+  const p = path.join(outDir, 'effective.json');
+  const prev = fs.existsSync(p) ? readJSON(p) : {};
+  const e = { engine: ENGINE_VERSION, startedAt: prev.startedAt || new Date().toISOString(), runs: cfg.runs, executorModel: cfg.executorModel || null, executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, ...extra };
+  writeJSON(p, e); return e;
+}
+function applyEffective(cfg, outDir) {
+  const p = path.join(outDir, 'effective.json'); if (!fs.existsSync(p)) return null;
+  const e = readJSON(p);
+  if (e.runs) cfg.runs = Number(e.runs);
+  if (e.executorModel !== undefined) cfg.executorModel = e.executorModel || cfg.executorModel;
+  if (e.executorEffort !== undefined) cfg.executorEffort = e.executorEffort || null;
+  if (e.judgeModel) cfg.judgeModel = e.judgeModel;
+  return e;
+}
 async function runPipeline(cfg, { outDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger = false, interleave = false, ignoreStopRule = false, isolation = null }) {
   fs.mkdirSync(outDir, { recursive: true });
   if (!fs.existsSync(path.join(outDir, 'gauge.json'))) fs.copyFileSync(cfg.__file, path.join(outDir, 'gauge.json'));
+  cfg.runs = runs; cfg.judgeModel = judgeModel || cfg.judgeModel;
+  writeEffective(cfg, outDir, { withTrigger, interleave, ignoreStopRule });
   let iso = isolation;
   if (!iso) { iso = await checkIsolation({ root, skillDir: cfg.skill.__abs, skillName: cfg.skill.name, executorModel: cfg.executorModel }); iso.claudeVersion = claudeVersion; }
   writeJSON(path.join(outDir, 'isolation.json'), iso);
@@ -1173,8 +1191,10 @@ async function main() {
   }
   if (cmd === 'matrix-report') {
     const outDir = path.resolve(args.out || die('缺 --out <矩陣目錄>'));
-    const combos = fs.readdirSync(outDir, { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(outDir, e.name, 'gauge.json'))).map((e) => { const g = readJSON(path.join(outDir, e.name, 'report.json')); const mc = g?.matrixCell || {}; return { slug: e.name, executorModel: mc.executorModel || null, effort: mc.effort || null }; });
+    const combos = fs.readdirSync(outDir, { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(outDir, e.name, 'gauge.json')) && fs.existsSync(path.join(outDir, e.name, 'report.json'))).map((e) => { const g = readJSON(path.join(outDir, e.name, 'report.json')); const mc = g?.matrixCell || {}; return { slug: e.name, executorModel: mc.executorModel || null, effort: mc.effort || null }; });
     if (!combos.length) die('矩陣目錄裡沒有任何一格（子目錄含 gauge.json 與 report.json）');
+    if (args['rebuild-cells']) for (const c of combos) { const cellDir = path.join(outDir, c.slug); const cfg2 = { ...cfg, executorModel: c.executorModel || cfg.executorModel, executorEffort: c.effort || null, __matrixCell: { slug: c.slug, executorModel: c.executorModel || cfg.executorModel || null, effort: c.effort || null } }; applyEffective(cfg2, cellDir); await writeReport(cfg2, cellDir); log(`重出 ${c.slug}/report.*`); }
+    { const first = combos[0]; const e = fs.existsSync(path.join(outDir, first.slug, 'effective.json')) ? readJSON(path.join(outDir, first.slug, 'effective.json')) : null; if (e?.runs) cfg.runs = Number(e.runs); }
     const m = buildMatrix(cfg, outDir, combos); writeJSON(path.join(outDir, 'matrix.json'), m); fs.writeFileSync(path.join(outDir, 'matrix.md'), matrixMarkdown(m)); await writeHtml(outDir, m, 'matrix');
     console.log(fs.readFileSync(path.join(outDir, 'matrix.md'), 'utf8')); return;
   }
@@ -1218,6 +1238,7 @@ async function main() {
     if (!iso.ok) die('已知答案檢查未通過，停。');
     const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
     if (!judgeModel) die('缺評分模型');
+    cfg.runs = runs; writeEffective(cfg, outDir, { mode: 'baseline' });
     await runAll(cfg, { root, outDir, runs, parallel, armNames: [base.name] });
     await gradeAll(cfg, { root, outDir, judgeModel });
     const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
@@ -1270,6 +1291,7 @@ async function main() {
     console.log(`評分完成 → ${outDir}`); return;
   }
   if (cmd === 'report') {
+    applyEffective(cfg, outDir);
     await writeReport(cfg, outDir);
     console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
     console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
