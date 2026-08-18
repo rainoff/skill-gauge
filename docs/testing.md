@@ -6,8 +6,8 @@
 
 | 層 | 做什麼 | 什麼時候跑 | 指令 |
 |---|---|---|---|
-| 自我測試 | 純函式與報告數學（祖先掃描、相似度、JSON 抽取、回歸比較、敏感度、觸發彙整、train／test 切分、description 讀寫、壓力判定抽取、矩陣併表、歷史配對、HTML 渲染）；不呼叫模型，幾秒跑完 | 每次改引擎；GitHub Actions 每次 push | `node .claude/skills/skill-gauge/scripts/selftest.mjs` |
-| 假模型端到端 | 用寫死行為的假 `claude`（`stub-claude.mjs`）把教具走完整條流程：lock → all（觸發＋壓力題）→ matrix → describe → compare → html → baseline；驗的是每一段接得起來、檔案形狀對、關鍵判定對（停案、壓力守住／折了、提案輪有進步、預設不寫回） | 每次改引擎；GitHub Actions 每次 push（不打 API） | `node .claude/skills/skill-gauge/scripts/e2e-stub.mjs` |
+| 自我測試 | 純函式與報告數學（祖先掃描、相似度、JSON 抽取、回歸比較、敏感度、觸發彙整、train／test 切分、description 讀寫、壓力判定抽取與極性、矩陣併表、歷史配對、HTML 渲染）；不呼叫模型，幾秒跑完 | 每次改引擎；GitHub Actions 每次 push | `node .claude/skills/skill-gauge/scripts/selftest.mjs` |
+| 假模型端到端 | 用寫死行為的假 `claude`（`stub-claude.mjs`）把教具走完整條流程：lock（含拒絕靜默覆寫、要求預先登錄）→ all（觸發＋壓力題）→ matrix → describe → compare → html → 停案路徑（安全探針）→ baseline；驗的是每一段接得起來、檔案形狀對、關鍵判定對（停案、壓力守住／折了、提案輪有進步、預設不寫回、續跑條件、history 去重） | 每次改引擎；GitHub Actions 每次 push（不打 API） | `node .claude/skills/skill-gauge/scripts/e2e-stub.mjs` |
 | 已知答案檢查 | 開跑前兩題兩組：規則題（不帶開關要讀到全域規則、帶了要 NO-RULES）＋skill 題（放了要 YES、沒放要 NO） | 每次 `all`／`run`／`baseline`／`matrix` 自動 | `node scripts/gauge.mjs check-isolation --skill <dir>` |
 | 評分者自證 | 先拿一份明顯通過、一份明顯不通過的產出考評分模型；判錯就不准評真的 | 每次 `grade` 自動（每個輸出目錄一次；矩陣一次、複製到每格） | 隨 `grade` 執行，結果在 `grader-selfcheck.json` |
 
@@ -29,6 +29,7 @@
 | 2026-08-18 | 2f4d64e→645d4b6 | mac | 弱描述示範 `describe --rounds 3 --runs 2`（`gauge-describe-demo.json`，description 故意寫成「整理文件或會議內容時使用」） | 第 0 輪 train 8/10（PRD／技術筆記濃縮誤觸發）、held-out 6/6；第 1 輪 9/10／6/6；第 2 輪 9/10／5/6；第 3 輪 10/10／5/6 → 最佳第 1 輪（held-out 同分看 train） | held-out 6 題分不出後三輪，正是「held-out 太小」的實例；提案模型 opus |
 | 2026-08-18 | 2f4d64e | mac | plugin 安裝：`claude plugin marketplace add <本機路徑>` → `claude plugin install skill-gauge@skill-gauge --scope local` → `claude plugin details` | 裝成功；Skills (1) skill-gauge；常駐約 380 token；測完已 uninstall＋remove | 觸發方式三種（clone／複製 skill 資料夾／plugin）都有一種實測 |
 | 2026-08-18 | c663fac | mac | codex sol（gpt-5.6-sol，xhigh，read-only）系統審查 10 項發現→修 8 項＋2 項部分；`selftest` 41/41、`e2e-stub` 34/34；環境變數白名單後 `check-isolation` 真跑 | rules PASS／skill PASS | 審查原文與處置見 session 交接檔；環境白名單不影響 claude 登入 |
+| 2026-08-18 | fcb8d44 | mac | codex sol 第二輪（對抗性複核今日變更）14 項發現→修 11 項＋3 項部分；`selftest` 46/46、`e2e-stub` 38/38（新增停案＋安全探針、鎖定語意、續跑條件）；haiku 格報告用新引擎重出（壓力題 comply 三組由「過度套用」正規化為「拒做」） | 通過 | 兩輪審查的處置表見 session 交接檔的設計審查看板 |
 
 ## 還沒測到的
 

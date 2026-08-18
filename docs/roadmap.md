@@ -30,9 +30,17 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 打包成 plugin（`.claude-plugin/`）：`claude plugin marketplace add` → `claude plugin install`，mac 實測可裝。
 - 假模型端到端測試進 CI（`stub-claude.mjs`＋`e2e-stub.mjs`）。
 
-## 下一版（v1.2）
+## 下一版（v1.2）——含 08-18 codex 審查後留下的項目
 
-- 把量測結果輸出成官方 `claude plugin eval` 的評測格式，讓想用官方引擎跑的人可以直接跑。
+兩位獨立審查者（codex gpt-5.6-sol，read-only）在 08-18 各審一輪，能當天修的都修了（c663fac、fcb8d44）；以下是明說「還沒做」的：
+
+- 停止點機械化：`prepare`／`approve`／`run` 狀態機，核可留收據，`all` 只接受 approved 狀態（現在四個停止點靠 SKILL.md 文字＋lock）。
+- 正式資料契約：`report.json`／`matrix.json`／`describe.json`／`grading.json`／`meta.json`／`lock.json`／`history.jsonl` 各一份 JSON Schema＋`contractVersion`；grading 記 assertion 集雜湊（同目錄改檢查項時不沿用舊評分）。
+- 描述優化改三分（train／validation／final test）：validation 選版本、final test 只對選定版本跑一次；description 讀寫換真正的 YAML parser（block scalar 含空白行會寫壞）。
+- 停案規則的時間漂移：pilot 基準決定停不停；正式比較改交錯（blocked random order），pilot 基準不進差值。
+- 安全邊界：OS／容器層沙箱、低權限帳號與短效 token、`--bare` 跳過 hook、Windows 不走 `shell:true`；目前只做到環境變數白名單、不跟隨 symlink、評分者無工具——**它不是不可信程式的安全沙箱**，README 與 SKILL.md 都這樣寫。
+- 假模型 e2e 加 fault-injection（執行 crash、評分壞 JSON、逾時、半數失敗、stream 形狀漂移）；CI 加 Windows。
+- 把量測結果輸出成官方 `claude plugin eval` 的評測格式，或反過來把官方 eval 當 executor adapter——skill-gauge 專注方法層（出題、對照組、預先登錄、能說／不能說、壓力測試、描述優化、回歸敘事）。
 - 跨 CLI（codex）那一路：同一份題目、同一份鎖定，換執行 CLI 再跑；兩邊結果分層、不互相當基準。
 - 外掛（plugin）與帶 hook 的受測物是個問題。目前的隔離做法載不到使用者層的外掛。效果測量現在只能不隔離著跑，並且要標明這件事。之後要另外設計解法。
 - Windows 上的引擎實跑（程式寫了 `shell:true` 與 `--root`，還沒在 Windows 跑過）；MCP 的已知答案題。
