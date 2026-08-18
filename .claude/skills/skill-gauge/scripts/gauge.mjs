@@ -579,6 +579,16 @@ function buildReport(cfg, outDir) {
     const D = passCount[A].pass - passCount[B].pass;
     report.sensitivity = { delta: D, flipsToErase: Math.abs(D), flipsToReverse: Math.abs(D) + 1, note: '一格翻轉＝任一組任一格通過↔不通過；差距在個位數時，一兩格就能翻盤' };
   }
+  // 三組以上（安慰劑／一句提醒）：把「有被指示」和「指示的內容」拆開
+  const baseArm = (cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1])?.name;
+  const extra = cfg.arms.filter((a) => a.name !== A && a.name !== baseArm);
+  if (extra.length && passCount[A] && passCount[baseArm]) {
+    report.placebo = extra.filter((e) => passCount[e.name]).map((e) => {
+      const p = passCount[e.name], w = passCount[A], b = passCount[baseArm];
+      return { arm: e.name, pass: `${p.pass}/${p.total}`, reminderEffect: p.pass - b.pass, contentEffect: w.pass - p.pass, totalEffect: w.pass - b.pass,
+        note: `${e.name} 比不帶多 ${p.pass - b.pass} 格（「有被指示」的功勞）；完整 skill 比 ${e.name} 多 ${w.pass - p.pass} 格（「內容」的功勞）——各只差幾格時同樣一兩格就翻` };
+    });
+  }
   const bl = path.join(outDir, 'baseline.json');
   if (fs.existsSync(bl)) report.baseline = readJSON(bl);
   const trig = path.join(outDir, 'trigger.json');
@@ -615,6 +625,7 @@ function reportMarkdown(cfg, r) {
     L.push(`- 計分的檢查項：${arms[0]} 通過 ${tA.pass}/${tA.total}，${arms[1]} 通過 ${tB.pass}/${tB.total}。差 ${r.sensitivity.delta} 格；只要翻 ${r.sensitivity.flipsToReverse} 格結論就反過來${Math.abs(r.sensitivity.delta) <= 2 ? '——這個差距很小，不要當成定論' : ''}。`);
   } else if (tA && !tB || !tA && tB) { const t = tA || tB, an = tA ? arms[0] : arms[1]; L.push(`- 只有 ${an} 組有計分格：通過 ${t.pass}/${t.total}${r.baseline ? '' : '（另一組還沒跑或全數作廢）'}。`); }
   else L.push('- 兩組都還沒有可比的計分格（run 作廢或失敗）。');
+  if (r.placebo?.length) for (const pl of r.placebo) L.push(`- 一句提醒 vs 內容：${pl.note}。`);
   const zero = r.flags.filter((f) => f.startsWith('零鑑別')).length, hurt = r.flags.filter((f) => f.startsWith('帶 skill 反而')).length, sim = r.flags.filter((f) => f.startsWith('同格')).length, bias = r.flags.filter((f) => f.startsWith('前置檢查偏向')).length;
   if (zero) L.push(`- 有 ${zero} 條檢查項兩組全過：這些項目測不出 skill 的差別（可能模型本來就會，或題目太鬆）。`);
   if (hurt) L.push(`- 有 ${hurt} 條檢查項帶 skill 那組反而較差，逐條看下面的表。`);
@@ -639,6 +650,7 @@ function reportMarkdown(cfg, r) {
     L.push('', '## 停案規則（不帶 skill 那組先跑）', '', `判定：**${r.baseline.verdict}**——${r.baseline.note}`, '', `| 檢查項 | 基準組通過／總格 |`, `|---|---|`);
     for (const [id, x] of Object.entries(r.baseline.perAssertion)) L.push(`| ${id} | ${x.pass}/${x.total} |`);
   }
+  if (r.placebo?.length) { L.push('', '## 有被指示 vs 指示的內容（第三組）', '', `| 組 | 通過／總格 | 比不帶多（提醒的功勞） | 完整 skill 比它多（內容的功勞） |`, `|---|---|---|---|`); for (const pl of r.placebo) L.push(`| ${pl.arm} | ${pl.pass} | ${pl.reminderEffect} | ${pl.contentEffect} |`); }
   L.push('', '## 逐題', '', `| 題 | 型 | ${arms.map((a) => `${a} 通過／總格（有效 run）`).join(' | ')} |`, `|---|---|${arms.map(() => '---').join('|')}|`);
   for (const c of r.cases) L.push(`| ${c.id} | ${c.type || ''} | ${arms.map((a) => { const x = c.arms[a]; return x ? `${x.pass}/${x.total}（${x.validRuns}${x.invalidRuns ? `，作廢 ${x.invalidRuns}` : ''}${x.failures ? `，失敗 ${x.failures}` : ''}）` : '—'; }).join(' | ')} |`);
   L.push('', '## 逐條斷言', '', `| 斷言 | 類 | ${arms.join(' | ')} |`, `|---|---|${arms.map(() => '---').join('|')}|`);

@@ -1,13 +1,17 @@
 {
-  "lockedAt": "2026-08-18T04:17:47.073Z",
+  "lockedAt": "2026-08-18T06:00:26.719Z",
   "entries": [
     {
       "label": "gauge.json",
-      "sha256": "1f21b5558fbfa21d5e3d2aec127e09ad51580222b46080878ec1cd3faa57b0e1"
+      "sha256": "3570ce74084697ac119b445be975752dbc65608b3e7820c30b288e758421901d"
     },
     {
       "label": "skill/SKILL.md",
       "sha256": "7ce9cc2f80c4ed2084ac55c6c7e2f0e374e7430bd48bfb9fd810c6a0353ec2d1"
+    },
+    {
+      "label": "arm-reminder/SKILL.md",
+      "sha256": "2d4543f5c0212654f3af3a3888f2449d60f1e53e6f05a86664ed9fcb9cea5060"
     },
     {
       "label": "case/case-01-trap/prompt",

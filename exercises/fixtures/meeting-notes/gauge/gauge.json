@@ -1,31 +1,148 @@
 {
   "name": "meeting-notes-fixture",
-  "skill": { "name": "meeting-notes", "path": "../skill/meeting-notes" },
+  "skill": {
+    "name": "meeting-notes",
+    "path": "../skill/meeting-notes"
+  },
   "executorModel": "claude-sonnet-5",
   "judgeModel": "claude-opus-5",
   "runs": 3,
   "root": null,
   "cases": [
-    { "id": "case-01-trap", "type": "trap", "promptFile": "case-01-trap.prompt.md", "materials": ["materials/transcript-trap.md"],
-      "assertions": ["gate-three-sections", "fact-no-invented-deadline", "judgment-unresolved-not-decided", "judgment-no-option-picked", "orient-tone"] },
-    { "id": "case-02-clean", "type": "clean", "promptFile": "case-02-clean.prompt.md", "materials": ["materials/transcript-clean.md"],
-      "assertions": ["gate-three-sections", "fact-dates-preserved", "fact-no-added-items", "orient-tone"] },
-    { "id": "case-03-negative", "type": "negative", "promptFile": "case-03-negative.prompt.md", "materials": ["materials/not-a-meeting.md"],
-      "assertions": ["judgment-no-forced-sections", "orient-tone"] }
+    {
+      "id": "case-01-trap",
+      "type": "trap",
+      "promptFile": "case-01-trap.prompt.md",
+      "materials": [
+        "materials/transcript-trap.md"
+      ],
+      "assertions": [
+        "gate-three-sections",
+        "fact-no-invented-deadline",
+        "judgment-unresolved-not-decided",
+        "judgment-no-option-picked",
+        "orient-tone"
+      ]
+    },
+    {
+      "id": "case-02-clean",
+      "type": "clean",
+      "promptFile": "case-02-clean.prompt.md",
+      "materials": [
+        "materials/transcript-clean.md"
+      ],
+      "assertions": [
+        "gate-three-sections",
+        "fact-dates-preserved",
+        "fact-no-added-items",
+        "orient-tone"
+      ]
+    },
+    {
+      "id": "case-03-negative",
+      "type": "negative",
+      "promptFile": "case-03-negative.prompt.md",
+      "materials": [
+        "materials/not-a-meeting.md"
+      ],
+      "assertions": [
+        "judgment-no-forced-sections",
+        "orient-tone"
+      ]
+    }
   ],
   "assertions": [
-    { "id": "gate-three-sections", "family": "gate", "text": "產出是一份整理過的會議記錄（有分項或分段），不是拒答、不是逐字稿照抄、不是只回一句話", "cases": ["case-01-trap", "case-02-clean"] },
-    { "id": "fact-no-invented-deadline", "family": "fact", "text": "待辦或決議裡沒有任何逐字稿沒說過的日期或期限（逐字稿只說「盡快」，產出不得出現「週五」「本週」等具體時點）", "cases": ["case-01-trap"] },
-    { "id": "judgment-unresolved-not-decided", "family": "judgment", "text": "價格頁改版（A 案／B 案）被列為未決問題，沒有出現在決議事項", "cases": ["case-01-trap"] },
-    { "id": "judgment-no-option-picked", "family": "judgment", "text": "產出沒有替與會者在 A 案／B 案之間做選擇或暗示某案已被採用", "cases": ["case-01-trap"] },
-    { "id": "fact-dates-preserved", "family": "fact", "text": "6 月 3 日、6 月 10 日兩個日期與各自的負責人（小華、小玲）正確對應，沒有改動或互換", "cases": ["case-02-clean"] },
-    { "id": "fact-no-added-items", "family": "fact", "text": "沒有加入逐字稿裡不存在的決議、待辦或未決事項", "cases": ["case-02-clean"] },
-    { "id": "judgment-no-forced-sections", "family": "judgment", "text": "產出沒有把這份技術筆記硬套成「決議／待辦／未決」三區的會議記錄；可以整理重點，但不應出現會議記錄格式", "cases": ["case-03-negative"] },
-    { "id": "orient-tone", "family": "orientation", "text": "（不計分）產出有沒有加入逐字稿沒有的評論、建議或補充說明？有的話摘錄一句", "cases": ["case-01-trap", "case-02-clean", "case-03-negative"] }
+    {
+      "id": "gate-three-sections",
+      "family": "gate",
+      "text": "產出是一份整理過的會議記錄（有分項或分段），不是拒答、不是逐字稿照抄、不是只回一句話",
+      "cases": [
+        "case-01-trap",
+        "case-02-clean"
+      ]
+    },
+    {
+      "id": "fact-no-invented-deadline",
+      "family": "fact",
+      "text": "待辦或決議裡沒有任何逐字稿沒說過的日期或期限（逐字稿只說「盡快」，產出不得出現「週五」「本週」等具體時點）",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "judgment-unresolved-not-decided",
+      "family": "judgment",
+      "text": "價格頁改版（A 案／B 案）被列為未決問題，沒有出現在決議事項",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "judgment-no-option-picked",
+      "family": "judgment",
+      "text": "產出沒有替與會者在 A 案／B 案之間做選擇或暗示某案已被採用",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "fact-dates-preserved",
+      "family": "fact",
+      "text": "6 月 3 日、6 月 10 日兩個日期與各自的負責人（小華、小玲）正確對應，沒有改動或互換",
+      "cases": [
+        "case-02-clean"
+      ]
+    },
+    {
+      "id": "fact-no-added-items",
+      "family": "fact",
+      "text": "沒有加入逐字稿裡不存在的決議、待辦或未決事項",
+      "cases": [
+        "case-02-clean"
+      ]
+    },
+    {
+      "id": "judgment-no-forced-sections",
+      "family": "judgment",
+      "text": "產出沒有把這份技術筆記硬套成「決議／待辦／未決」三區的會議記錄；可以整理重點，但不應出現會議記錄格式",
+      "cases": [
+        "case-03-negative"
+      ]
+    },
+    {
+      "id": "orient-tone",
+      "family": "orientation",
+      "text": "（不計分）產出有沒有加入逐字稿沒有的評論、建議或補充說明？有的話摘錄一句",
+      "cases": [
+        "case-01-trap",
+        "case-02-clean",
+        "case-03-negative"
+      ]
+    }
   ],
   "trigger": {
     "runs": 2,
-    "should": ["幫我整理一下這份會議逐字稿：\n主管：預算案通過了。小王：那我下週開始採購。主管：好。", "整理會議：\n甲：報表功能延到下個月。乙：知道了，我通知客戶。"],
-    "shouldNot": ["幫我看看這段程式為什麼會報錯：console.log(x.length) 但 x 是 undefined", "幫我把這篇技術筆記濃縮成三點：快取 TTL 設錯造成命中率偏低，建議改成 55 分鐘並在排程後清快取"]
-  }
+    "should": [
+      "幫我整理一下這份會議逐字稿：\n主管：預算案通過了。小王：那我下週開始採購。主管：好。",
+      "整理會議：\n甲：報表功能延到下個月。乙：知道了，我通知客戶。"
+    ],
+    "shouldNot": [
+      "幫我看看這段程式為什麼會報錯：console.log(x.length) 但 x 是 undefined",
+      "幫我把這篇技術筆記濃縮成三點：快取 TTL 設錯造成命中率偏低，建議改成 55 分鐘並在排程後清快取"
+    ]
+  },
+  "arms": [
+    {
+      "name": "with",
+      "skill": true
+    },
+    {
+      "name": "without",
+      "skill": false
+    },
+    {
+      "name": "reminder",
+      "skillPath": "reminder"
+    }
+  ]
 }
