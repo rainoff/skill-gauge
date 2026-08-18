@@ -7,7 +7,8 @@
 //   node scripts/gauge.mjs run     --config <gauge.json> --out <dir> [--runs N] [--root <dir>] [--parallel N]
 //   node scripts/gauge.mjs grade   --out <dir> [--judge-model <model>]
 //   node scripts/gauge.mjs report  --out <dir>
-//   node scripts/gauge.mjs all     --config <gauge.json> --out <dir> [--with-trigger]
+//   node scripts/gauge.mjs all     --config <gauge.json> --out <dir> [--with-trigger] [--interleave] [--ignore-stop-rule]
+//   （all 預設先跑不帶 skill 那組並套停案規則：每條計分檢查每次都過＝停，不跑帶 skill 那組）
 //
 // 每一次執行都是隔離的新程序：不在家目錄底下的暫存目錄、只放受測 skill、
 // --setting-sources project --strict-mcp-config、CLAUDE_CODE_DISABLE_AUTO_MEMORY=1。
@@ -286,10 +287,14 @@ async function runOne({ cfg, root, kase, arm, k, outDir }) {
   return meta;
 }
 
-async function runAll(cfg, { root, outDir, runs, parallel }) {
+async function runAll(cfg, { root, outDir, runs, parallel, armNames = null }) {
   fs.mkdirSync(outDir, { recursive: true });
+  const arms = armNames ? cfg.arms.filter((a) => armNames.includes(a.name)) : cfg.arms;
   const jobs = [];
-  for (let k = 1; k <= runs; k++) for (const kase of cfg.cases) for (const arm of cfg.arms) jobs.push({ kase, arm, k }); // 交錯：同一次 run 兩組相鄰
+  for (let k = 1; k <= runs; k++) for (const kase of cfg.cases) for (const arm of arms) {
+    if (fs.existsSync(path.join(outDir, 'runs', kase.id, arm.name, `r${k}`, 'meta.json'))) continue; // 已跑過的不重跑（可續跑）
+    jobs.push({ kase, arm, k }); // 交錯：同一次 run 各組相鄰
+  }
   const metas = [];
   let i = 0;
   const workers = Array.from({ length: Math.max(1, parallel) }, async () => {
@@ -400,6 +405,32 @@ async function gradeAll(cfg, { root, outDir, judgeModel }) {
   return results;
 }
 
+// ---------- 停案規則：基準組先跑，全過就停 ----------
+function baselineVerdict(cfg, outDir) {
+  const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
+  const scored = cfg.assertions.filter((a) => a.family === 'fact' || a.family === 'judgment').map((a) => a.id);
+  const per = {}; let validRuns = 0, invalid = 0, failures = 0, allPass = true;
+  for (const kase of cfg.cases) {
+    const armDir = path.join(outDir, 'runs', kase.id, base.name);
+    if (!fs.existsSync(armDir)) continue;
+    for (const rk of fs.readdirSync(armDir).sort()) {
+      const gpath = path.join(armDir, rk, 'grading.json');
+      if (!fs.existsSync(gpath)) continue;
+      const g = readJSON(gpath);
+      if (g.harnessFailure) { failures++; continue; }
+      if (g.gateFailed) { invalid++; continue; }
+      validRuns++;
+      for (const v of g.verdicts) { if (!scored.includes(v.id)) continue; const x = (per[v.id] ||= { pass: 0, total: 0 }); x.total++; if (v.pass) x.pass++; else allPass = false; }
+    }
+  }
+  const weak = Object.entries(per).filter(([, x]) => x.pass < x.total).map(([id, x]) => `${id} ${x.pass}/${x.total}`);
+  return { arm: base.name, validRuns, invalidRuns: invalid, harnessFailures: failures, perAssertion: per, allPass: validRuns > 0 && allPass, weakAssertions: weak,
+    verdict: validRuns === 0 ? 'NO-DATA' : allPass ? 'STOP' : 'CONTINUE',
+    note: validRuns === 0 ? '基準組沒有有效 run（作廢或失敗），先補跑' : allPass
+      ? '基準組（不帶 skill）每條計分檢查每次都過：這組題／這把尺測不出 skill 的貢獻——要嘛模型本來就會、要嘛題目太鬆。改題或停案，不要靠多跑幾次。'
+      : `基準組在 ${weak.length} 條檢查上沒全過，帶 skill 那組有空間顯出差別；繼續跑。` };
+}
+
 // ---------- 報告 ----------
 function bigramDice(a, b) {
   const norm = (s) => s.replace(/\s+/g, '').toLowerCase();
@@ -479,6 +510,8 @@ function buildReport(cfg, outDir) {
     const D = passCount[A].pass - passCount[B].pass;
     report.sensitivity = { delta: D, flipsToErase: Math.abs(D), flipsToReverse: Math.abs(D) + 1, note: '一格翻轉＝任一組任一格通過↔不通過；差距在個位數時，一兩格就能翻盤' };
   }
+  const bl = path.join(outDir, 'baseline.json');
+  if (fs.existsSync(bl)) report.baseline = readJSON(bl);
   const trig = path.join(outDir, 'trigger.json');
   if (fs.existsSync(trig)) report.trigger = readJSON(trig);
   const iso = path.join(outDir, 'isolation.json');
@@ -495,6 +528,7 @@ function reportMarkdown(cfg, r) {
   L.push(`# skill-gauge 報告 — ${r.name}`, '', `產生時間：${r.generatedAt}`, '');
   // 先看這裡：用資料生成的白話摘要（描述性）
   L.push('## 先看這裡（描述性，只限這次條件）', '');
+  if (r.baseline) L.push(`- 停案規則：不帶 skill 那組先跑完 ${r.baseline.validRuns} 次有效 run——${r.baseline.verdict === 'STOP' ? '**已停。**' + r.baseline.note : r.baseline.verdict === 'CONTINUE' ? '沒全過（' + r.baseline.weakAssertions.join('、') + '），繼續跑帶 skill 那組。' : '沒有有效資料。'}`);
   const tA = r.totals[arms[0]], tB = r.totals[arms[1]];
   if (tA && tB) {
     L.push(`- 計分的檢查項：${arms[0]} 通過 ${tA.pass}/${tA.total}，${arms[1]} 通過 ${tB.pass}/${tB.total}。差 ${r.sensitivity.delta} 格；只要翻 ${r.sensitivity.flipsToReverse} 格結論就反過來${Math.abs(r.sensitivity.delta) <= 2 ? '——這個差距很小，不要當成定論' : ''}。`);
@@ -517,6 +551,10 @@ function reportMarkdown(cfg, r) {
   L.push('## 總表（只計事實紀律／判斷紀律；前置檢查不計分、取向觀察不計分）', '', `| 組 | 通過／總格數 |`, `|---|---|`);
   for (const a of arms) L.push(`| ${a} | ${r.totals[a] ? `${r.totals[a].pass}/${r.totals[a].total}` : '—'} |`);
   if (r.sensitivity) L.push('', `差距（${arms[0]} − ${arms[1]}）＝ ${r.sensitivity.delta}；抹平要翻 ${r.sensitivity.flipsToErase} 格、反轉要翻 ${r.sensitivity.flipsToReverse} 格。${r.sensitivity.note}`);
+  if (r.baseline) {
+    L.push('', '## 停案規則（不帶 skill 那組先跑）', '', `判定：**${r.baseline.verdict}**——${r.baseline.note}`, '', `| 檢查項 | 基準組通過／總格 |`, `|---|---|`);
+    for (const [id, x] of Object.entries(r.baseline.perAssertion)) L.push(`| ${id} | ${x.pass}/${x.total} |`);
+  }
   L.push('', '## 逐題', '', `| 題 | 型 | ${arms.map((a) => `${a} 通過／總格（有效 run）`).join(' | ')} |`, `|---|---|${arms.map(() => '---').join('|')}|`);
   for (const c of r.cases) L.push(`| ${c.id} | ${c.type || ''} | ${arms.map((a) => { const x = c.arms[a]; return x ? `${x.pass}/${x.total}（${x.validRuns}${x.invalidRuns ? `，作廢 ${x.invalidRuns}` : ''}${x.failures ? `，失敗 ${x.failures}` : ''}）` : '—'; }).join(' | ')} |`);
   L.push('', '## 逐條斷言', '', `| 斷言 | 類 | ${arms.join(' | ')} |`, `|---|---|${arms.map(() => '---').join('|')}|`);
@@ -570,7 +608,26 @@ async function main() {
     if (!iso.ok) die(`已知答案檢查未通過：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}。停，不開跑。`);
     log(`已知答案檢查：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}`);
     if (cmd === 'all' && args['with-trigger']) await runTrigger(cfg, { root, outDir, runs: Number(cfg.trigger?.runs || 3) });
-    await runAll(cfg, { root, outDir, runs, parallel: Number(args.parallel || 1) });
+    const parallel = Number(args.parallel || 1);
+    if (cmd === 'all' && !args.interleave) {
+      // 停案規則：先跑不帶 skill 那組跑滿次數、盲評；全過就停，不浪費帶 skill 那組的錢
+      const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
+      const judgeModel = args['judge-model'] || cfg.judgeModel;
+      if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
+      await runAll(cfg, { root, outDir, runs, parallel, armNames: [base.name] });
+      await gradeAll(cfg, { root, outDir, judgeModel });
+      const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
+      log(`停案規則：${bv.verdict}——${bv.note}`);
+      if (bv.verdict === 'STOP' && !args['ignore-stop-rule']) {
+        const r = buildReport(cfg, outDir); writeJSON(path.join(outDir, 'report.json'), r); fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
+        console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
+        console.log(`\n已依停案規則停止（未跑帶 skill 那組）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`);
+        process.exit(3);
+      }
+      await runAll(cfg, { root, outDir, runs, parallel, armNames: cfg.arms.filter((a) => a.name !== base.name).map((a) => a.name) });
+    } else {
+      await runAll(cfg, { root, outDir, runs, parallel, armNames: args.arms ? String(args.arms).split(',') : null });
+    }
     if (cmd === 'run') { console.log(`執行完成 → ${outDir}`); return; }
   }
   if (cmd === 'grade' || cmd === 'all') {

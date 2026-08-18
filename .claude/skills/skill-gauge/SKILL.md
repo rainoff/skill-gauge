@@ -51,11 +51,12 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 
 先算給使用者看：題數 × 2 組 × 次數 ＝ 幾次執行，每次約 10 秒到幾分鐘（看 skill）；加上同樣次數的評分。使用者說跑再跑。
 
-- **Claude Code**：一行跑完（已知答案檢查 → 兩組交錯執行 → 盲評 → 報告）：
+- **Claude Code**：一行跑完（已知答案檢查 → **不帶 skill 那組先跑滿、盲評、套停案規則** → 帶 skill 那組 → 盲評 → 報告）：
   ```
   node <SKILL_DIR>/scripts/gauge.mjs all --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM> [--with-trigger]
   ```
-  Windows 加 `--root D:\sg`（系統暫存目錄在使用者目錄底下，引擎會拒絕）。分段跑用 `run` / `grade` / `report`；補跑作廢或失敗的 run，刪掉該 run 目錄再跑 `run` 即可（已完成的不重跑）。**不可用 subagent 代替引擎跑兩組**——subagent 繼承你的環境，不是隔離。
+  **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。
+  Windows 加 `--root D:\sg`（系統暫存目錄在使用者目錄底下，引擎會拒絕）。分段跑用 `run` / `grade` / `report`；已跑過的 run 不重跑（可續跑），要補跑就刪掉該 run 目錄再跑；`--interleave` 改回兩組交錯、不先跑基準組。**不可用 subagent 代替引擎跑兩組**——subagent 繼承你的環境，不是隔離。
 - **Cowork／Desktop／Claude.ai**：跑不了引擎。照 README「不用 Claude Code 的同事怎麼跑」——你準備兩組的指令、材料與人工紀錄表，使用者自己開新對話跑，回填 results.md。
 
 ## 第 5 步：寫結果
