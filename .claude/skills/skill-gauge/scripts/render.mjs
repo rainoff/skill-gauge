@@ -1441,7 +1441,8 @@ function inlineMd(s) {
   x = x.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   return x;
 }
-export function mdToHtml(md) {
+export function mdToHtml(md, opts = {}) {
+  const headingOffset = Math.max(0, Math.min(4, Number(opts.headingOffset) || 0)); // 嵌在區塊裡時把 # 降級（h1→h3），免得比區塊標題還大
   try {
     const src = txt(md);
     if (!src) return '';
@@ -1464,7 +1465,7 @@ export function mdToHtml(md) {
       }
       // ATX 標題
       const h = /^(#{1,6})\s+(.*)$/.exec(line);
-      if (h) { flushPara(); const lvl = h[1].length; out.push(`<h${lvl}>${inlineMd(h[2].trim())}</h${lvl}>`); i++; continue; }
+      if (h) { flushPara(); const lvl = Math.min(6, h[1].length + headingOffset); out.push(`<h${lvl}>${inlineMd(h[2].trim())}</h${lvl}>`); i++; continue; }
       // pipe 表格：標頭列 + 分隔列（---）
       if (/\|/.test(line) && line.trim() && lines[i + 1] && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
         flushPara();
@@ -1691,8 +1692,9 @@ function secPreviewCost(cost) {
 function secPreviewSayNotSay(prereg) {
   const p = asObj(prereg);
   if (!p.exists) return null;
-  if (p.say == null && p.notSay == null) return section('say-notsay', '能說／不能說', `<p class="bar">預先登錄裡找不到標題含「能說」「不能說」的段落——核可前請補上。</p>`);
+  if (p.say == null && p.notSay == null && p.combined == null) return section('say-notsay', '能說／不能說', `<p class="bar">預先登錄裡找不到標題含「能說」「不能說」的段落——核可前請補上。</p>`);
   const inner = [
+    p.combined != null ? `<div class="bar"><strong>${esc(txt(p.combinedHeading) || '能說／不能說')}</strong>${mdToHtml(p.combined)}</div>` : '',
     p.say != null ? `<div class="bar"><strong>能說</strong>${mdToHtml(p.say)}</div>` : '',
     p.notSay != null ? `<div class="bar"><strong>不能說</strong>${mdToHtml(p.notSay)}</div>` : '',
   ].join('');
@@ -1702,7 +1704,7 @@ function secPreviewSayNotSay(prereg) {
 function secPreviewFull(prereg) {
   const p = asObj(prereg);
   if (!p.exists) return section('prereg-full', '預先登錄全文', `<p class="bar">找不到 pre-registration.md——lock 會拒絕，除非 --allow-missing-prereg。</p>`);
-  return section('prereg-full', '預先登錄全文', `<details open><div class="detail-body">${mdToHtml(p.markdown)}</div></details>`);
+  return section('prereg-full', '預先登錄全文', `<details open><summary>pre-registration.md 全文（點一下收合）</summary><div class="detail-body">${mdToHtml(p.markdown, { headingOffset: 2 })}</div></details>`);
 }
 
 export function renderPreviewHtml(data, opts = {}) {

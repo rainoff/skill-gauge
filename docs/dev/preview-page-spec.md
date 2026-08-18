@@ -1,4 +1,4 @@
-# Spec: `preview` — the approval page (v1.2)
+# Spec: `preview` — the approval page (v1.1.1)
 
 Status: implementation spec for the `feat/preview-page` branch. Human-facing docs stay in Traditional Chinese; this file is the execution plan (English on purpose: it is read by the implementing agent, not by end users).
 
@@ -13,7 +13,7 @@ Maintainer feedback while dogfooding the v1.1 flow (2026-08-18): after the six q
 
 | File | Change |
 |---|---|
-| `.claude/skills/skill-gauge/scripts/gauge.mjs` | new subcommand `preview`; exported `buildPreview(cfg, opts)`; `label` support on assertions; `ENGINE_VERSION = '1.2.0'` |
+| `.claude/skills/skill-gauge/scripts/gauge.mjs` | new subcommand `preview`; exported `buildPreview(cfg, opts)`; `label` support on assertions; `ENGINE_VERSION = '1.1.1'` |
 | `.claude/skills/skill-gauge/scripts/render.mjs` | `renderPreviewHtml(data)`, `mdToHtml(md)` (exported), `detectKind` → `'preview'`, `renderHtml` dispatch; report/case/output sections show `label ?? text` |
 | `.claude/skills/skill-gauge/scripts/selftest.mjs` | tests for `mdToHtml`, `renderPreviewHtml`, `buildPreview` cost math, label display |
 | `.claude/skills/skill-gauge/scripts/e2e-stub.mjs` | run `preview` on the fixture (before and after lock) and assert on the HTML |
@@ -65,29 +65,30 @@ node scripts/gauge.mjs preview --config <gauge.json> [--out <file.html>] [--open
 
 Labels (zh): type `trap→陷阱題`, `clean→乾淨對照題`, `negative→負向對照題`, `pressure→壓力題`, else the raw type; family `gate→前置檢查（不計分）`, `fact→事實紀律`, `judgment→判斷紀律`, `orientation→取向觀察（不計分）`. `scored = family ∈ {fact, judgment}`.
 
-Cost (all integers):
-- `executions = cases × arms × runs`
+Cost (all integers; caliber = what the engine actually spends, corrected 2026-08-18 after critic review):
+- `executions = cases × arms × runs` (arms = baseline arm only when the config has no skill)
 - `gradings = executions`
-- `isolationChecks = baselineOnly ? 2 : 4`
-- `graderSelfCheck = 2`
-- `triggerRuns = trigger ? (should.length + shouldNot.length) × trigger.runs : 0` (note in the page: only spent with `--with-trigger`)
+- `isolationChecks = (baselineOnly ? 2 : 4) × distinctExecutorModels` (matrix cells with the same model share one check)
+- `graderSelfCheck = 2` (once per measurement, copied into matrix cells)
+- `triggerRuns = trigger ? (should.length + shouldNot.length) × trigger.runs : 0` — **shown separately, not in totalCalls** (only spent with `--with-trigger` / `describe`)
 - `matrixCells = matrix?.length || 1`
-- `totalCalls = (executions + gradings + isolationChecks + graderSelfCheck) × matrixCells + triggerRuns × matrixCells`
-- `minCallsIfStop`: what is spent when the stop rule fires — baseline arm all cases × runs (executions + gradings) + probes (pressure/negative cases) × (arms − 1) × runs × 2 + isolationChecks + graderSelfCheck, × matrixCells.
+- `totalCalls = (executions + gradings) × matrixCells + isolationChecks + graderSelfCheck`
+- `minCallsIfStop`: what is spent when the stop rule fires — (baseline arm all cases × runs × 2 + probes (pressure/negative cases) × (arms − 1) × runs × 2) × matrixCells + isolationChecks + graderSelfCheck.
 - `formula`: a short zh string spelling the arithmetic with the actual numbers.
+
+Version: the approval page is an additive patch on v1.1 (the talk, README and slides all say v1.1) → `ENGINE_VERSION = '1.1.1'`, `.claude-plugin/plugin.json` version 1.1.1.
 
 Lock: no `lock.json` → `none`; exists and `verifyLock(cfg, lockPath).ok` → `locked` (+ lockedAt, relocks, engineAtLock); exists but mismatch → `mismatch` (+ diffs).
 
-Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay`: scan headings (any level) whose text matches `/能說|can say|may say|permitted claims/i` and `/不能說|cannot say|must not say|not permitted/i`; the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that contain **both** (e.g. "能說／不能說") → put the whole body in `say` and leave `notSay = null`.
+Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay` / `combined`: scan headings (any level); test the not-say pattern first (`/不能說|cannot say|can't say|must not say|not permitted|what we can('t|not) say/i`), then the say pattern (`/(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i`); the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that match **both** (e.g. "能說／不能說") → the whole body goes to `combined` with `combinedHeading` = the heading text (rendered under its own heading, never labelled 能說 alone).
 
 Checks (automated hints — every one must be cheap and deterministic; `ok: null` = not applicable):
 - `prereg-exists` — `pre-registration.md` present.
-- `say-notsay-found` — `say` or `notSay` extracted.
+- `say-notsay-found` — `say`, `notSay` or `combined` extracted.
 - `has-gate` — at least one `gate` assertion.
 - `has-trap`, `has-clean`, `has-negative` — case types present.
 - `runs-at-least-3` — `cfg.runs ≥ 3`.
 - `prompt-mentions-skill-name` — `ok:false` if any case prompt contains `cfg.skill.name` (case-insensitive) — the shared prompt must not leak the skill; `null` when baseline-only.
-- `materials-exist` — every material file exists (loadConfig already dies otherwise, so this is `true` when reached; keep it for the page).
 - `lock-consistent` — `null` when no lock; `true` when locked; `false` when mismatch.
 Text for each is zh, one sentence, written from the reader's point of view (「題目裡沒有出現受測 skill 的名字」 etc.).
 

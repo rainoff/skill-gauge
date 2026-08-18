@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.2.0';
+const ENGINE_VERSION = '1.1.1';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
@@ -1226,20 +1226,21 @@ function extractSayNotSay(md) {
   lines.forEach((line, idx) => { const m = /^(#{1,6})\s+(.*)$/.exec(line); if (m) headings.push({ level: m[1].length, text: m[2].trim(), idx }); });
   // 「能說」的比對排除被「不」接住的那一個（否則「不能說」永遠也會命中「能說」，分不出獨立標題）；
   // 標題同時含兩邊關鍵字（如「能說／不能說」）時，「能說」在句首那次不受「不」影響，isSay 仍會是 true
-  const sayRe = /(?<!不)能說|can say|may say|permitted claims/i;
-  const notSayRe = /不能說|cannot say|must not say|not permitted/i;
-  let say = null, notSay = null;
+  const sayRe = /(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i;
+  const notSayRe = /不能說|cannot say|can't say|must not say|not permitted|what we can't say|what we cannot say/i;
+  let say = null, notSay = null, combined = null, combinedHeading = null;
   for (let hi = 0; hi < headings.length; hi++) {
     const h = headings[hi];
-    const isSay = sayRe.test(h.text), isNotSay = notSayRe.test(h.text);
+    const isNotSay = notSayRe.test(h.text), isSay = sayRe.test(h.text); // 先判「不能說」：英文 not permitted／can't 都含 say 類字眼
     if (!isSay && !isNotSay) continue;
     let end = lines.length;
     for (let hj = hi + 1; hj < headings.length; hj++) if (headings[hj].level <= h.level) { end = headings[hj].idx; break; }
     const body = lines.slice(h.idx + 1, end).join('\n').trim();
+    if (isSay && isNotSay) { if (combined == null) { combined = body; combinedHeading = h.text; } continue; } // 合併標題（如「能說／不能說」）：整段當一塊、標題照原文
     if (isSay && say == null) say = body;
-    if (isNotSay && !isSay && notSay == null) notSay = body; // 兩邊都命中的標題只算 say，notSay 留給獨立的「不能說」標題
+    if (isNotSay && !isSay && notSay == null) notSay = body;
   }
-  return { say, notSay };
+  return { say, notSay, combined, combinedHeading };
 }
 
 function txt(x) { return x === null || x === undefined ? '' : String(x); }
@@ -1253,7 +1254,8 @@ function buildPreview(cfg, opts = {}) {
     try { const d = getDescription(fs.readFileSync(p, 'utf8')); return d ? d.slice(0, 240) : null; } catch { return null; }
   })();
   const skill = { name: cfg.skill.name || null, path: cfg.skill.path || null, exists: !!(cfg.skill.__abs && fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))), description: skillDesc };
-  const arms = cfg.arms.map((a) => {
+  const armsSrc = cfg.__baselineOnly ? cfg.arms.filter((a) => !a.skill && !a.skillPath) : cfg.arms; // 沒有受測 skill 時只會跑基準組（baseline 指令），核可頁不列跑不到的組
+  const arms = armsSrc.map((a) => {
     if (a.skillPath) {
       let desc = null;
       const p = a.__abs ? path.join(a.__abs, 'SKILL.md') : null;
@@ -1281,16 +1283,18 @@ function buildPreview(cfg, opts = {}) {
   const trigger = cfg.trigger ? { runs: cfg.trigger.runs, should: cfg.trigger.should || [], shouldNot: cfg.trigger.shouldNot || [] } : null;
   const matrix = cfg.matrix && cfg.matrix.length ? cfg.matrix.map((m) => ({ executorModel: m.executorModel, effort: m.effort || null })) : null;
   // 成本估算（見檔頭第 5 節公式）
-  const casesN = cfg.cases.length, armsN = cfg.arms.length || 1, runsN = Number(cfg.runs) || 0;
+  const casesN = cfg.cases.length, armsN = armsSrc.length || 1, runsN = Number(cfg.runs) || 0;
   const executions = casesN * armsN * runsN, gradings = executions;
-  const isolationChecks = cfg.__baselineOnly ? 2 : 4, graderSelfCheck = 2;
-  const triggerRuns = trigger ? (trigger.should.length + trigger.shouldNot.length) * Number(trigger.runs || 0) : 0;
   const matrixCells = (matrix && matrix.length) || 1;
-  const totalCalls = (executions + gradings + isolationChecks + graderSelfCheck) * matrixCells + triggerRuns * matrixCells;
+  // 口徑照引擎實際行為：已知答案檢查每個不同執行模型一次（矩陣裡同模型不同 effort 共用）、評分者自證整份只做一次、觸發題只在 --with-trigger 才花（另計、不進合計）
+  const distinctModels = matrix && matrix.length ? new Set(matrix.map((m) => m.executorModel || cfg.executorModel || null)).size : 1;
+  const isolationPerModel = cfg.__baselineOnly ? 2 : 4, isolationChecks = isolationPerModel * distinctModels, graderSelfCheck = 2;
+  const triggerRuns = trigger ? (trigger.should.length + trigger.shouldNot.length) * Number(trigger.runs || 0) : 0;
+  const totalCalls = (executions + gradings) * matrixCells + isolationChecks + graderSelfCheck;
   const probeCases = cfg.cases.filter((c) => c.type === 'pressure' || c.type === 'negative').length;
-  const minCallsIfStop = ((casesN * runsN * 2) + (probeCases * Math.max(0, armsN - 1) * runsN * 2) + isolationChecks + graderSelfCheck) * matrixCells;
-  const formula = `${casesN} 題 × ${armsN} 組 × ${runsN} 次 = ${executions} 次執行＋${gradings} 次評分；已知答案檢查 ${isolationChecks} 次、評分者自證 ${graderSelfCheck} 次${triggerRuns ? `；觸發題 ${triggerRuns} 次（只在 --with-trigger 才花）` : ''}${matrixCells > 1 ? `；矩陣 ${matrixCells} 格` : ''} → 合計 ${totalCalls} 次`;
-  const cost = { cases: casesN, arms: armsN, runs: runsN, executions, gradings, isolationChecks, graderSelfCheck, triggerRuns, matrixCells, totalCalls, minCallsIfStop, formula };
+  const minCallsIfStop = ((casesN * runsN * 2) + (probeCases * Math.max(0, armsN - 1) * runsN * 2)) * matrixCells + isolationChecks + graderSelfCheck;
+  const formula = `${casesN} 題 × ${armsN} 組 × ${runsN} 次 = ${executions} 次執行＋${gradings} 次評分${matrixCells > 1 ? `，矩陣 ${matrixCells} 格 → ×${matrixCells}` : ''}；已知答案檢查 ${isolationChecks} 次（${distinctModels} 個執行模型各 ${isolationPerModel}）、評分者自證 ${graderSelfCheck} 次 → 合計 ${totalCalls} 次${triggerRuns ? `；觸發題另計 ${triggerRuns} 次（只在 --with-trigger 或 describe 才花）` : ''}`;
+  const cost = { cases: casesN, arms: armsN, runs: runsN, executions, gradings, isolationChecks, distinctModels, graderSelfCheck, triggerRuns, matrixCells, totalCalls, minCallsIfStop, formula };
   // 鎖定狀態
   const lockPath = path.join(dir, 'lock.json');
   let lock;
@@ -1316,14 +1320,13 @@ function buildPreview(cfg, opts = {}) {
   if (!cfg.__baselineOnly && cfg.skill.name) { const low = String(cfg.skill.name).toLowerCase(); promptLeak = cfg.cases.some((c) => (c.__prompt || '').toLowerCase().includes(low)); }
   const checks = [
     { id: 'prereg-exists', ok: prereg.exists, text: prereg.exists ? '找得到 pre-registration.md。' : '找不到 pre-registration.md——預先登錄還沒寫。' },
-    { id: 'say-notsay-found', ok: !prereg.exists ? null : (prereg.say != null || prereg.notSay != null), text: !prereg.exists ? '沒有 pre-registration.md，這條不適用。' : (prereg.say != null || prereg.notSay != null) ? '預先登錄裡找得到「能說／不能說」的段落。' : '預先登錄裡沒有標題含「能說」或「不能說」的段落。' },
+    { id: 'say-notsay-found', ok: !prereg.exists ? null : (prereg.say != null || prereg.notSay != null || prereg.combined != null), text: !prereg.exists ? '沒有 pre-registration.md，這條不適用。' : (prereg.say != null || prereg.notSay != null || prereg.combined != null) ? '預先登錄裡找得到「能說／不能說」的段落。' : '預先登錄裡沒有標題含「能說」或「不能說」的段落。' },
     { id: 'has-gate', ok: hasFamily('gate'), text: hasFamily('gate') ? '題組裡有前置檢查（gate）。' : '題組裡沒有前置檢查（gate）——沒有基本格式先擋一手。' },
     { id: 'has-trap', ok: hasType('trap'), text: hasType('trap') ? '有陷阱題。' : '沒有陷阱題。' },
     { id: 'has-clean', ok: hasType('clean'), text: hasType('clean') ? '有乾淨對照題。' : '沒有乾淨對照題。' },
     { id: 'has-negative', ok: hasType('negative'), text: hasType('negative') ? '有負向對照題。' : '沒有負向對照題。' },
     { id: 'runs-at-least-3', ok: cfg.runs >= 3, text: cfg.runs >= 3 ? `每組每題跑 ${cfg.runs} 次，≥3。` : `每組每題只跑 ${cfg.runs} 次，少於建議的 3 次。` },
     { id: 'prompt-mentions-skill-name', ok: cfg.__baselineOnly ? null : !promptLeak, text: cfg.__baselineOnly ? '沒有受測 skill，這條不適用。' : promptLeak ? '題目指令裡出現了受測 skill 的名字——共用指令可能洩題。' : '題目指令裡沒有出現受測 skill 的名字。' },
-    { id: 'materials-exist', ok: true, text: '材料檔都存在（讀不到的話這裡也跑不到）。' },
     { id: 'lock-consistent', ok: lock.state === 'none' ? null : lock.state === 'locked', text: lock.state === 'none' ? '還沒鎖定，這條不適用。' : lock.state === 'locked' ? '目前檔案跟鎖定時的雜湊一致。' : `目前檔案跟鎖定時不一致：${lock.diffs.join('、')}` },
   ];
   return {

@@ -119,7 +119,8 @@ const dmd = describeMarkdown(dfake);
 t('描述優化 markdown：最佳輪與逐題', /最佳（第 1 輪/.test(dmd) && /held-out/.test(dmd) && /2\/2 ✓/.test(dmd));
 
 // 核可頁：能說／不能說擷取（標題同時含兩邊關鍵字＝整段給 say，notSay 留 null；獨立標題各自擷取）
-t('能說／不能說：合併標題只給 say', (() => { const r = extractSayNotSay('## 能說／不能說（先寫死）\n- 能說 A\n- 不能說 B\n\n## 執行紀律\n其他'); return /能說 A/.test(r.say) && /不能說 B/.test(r.say) && r.notSay === null; })());
+t('能說／不能說：合併標題整段當 combined、標題照原文，say／notSay 留空', (() => { const r = extractSayNotSay('## 能說／不能說（先寫死）\n- 能說 A\n- 不能說 B\n\n## 執行紀律\n其他'); return /能說 A/.test(r.combined) && /不能說 B/.test(r.combined) && r.say === null && r.notSay === null && /能說／不能說/.test(r.combinedHeading); })());
+t('能說／不能說：英文 not permitted claims 歸不能說、what we can\'t say 也認得', (() => { const r = extractSayNotSay('## Permitted claims\nP\n\n## Not permitted claims\nNP\n'); const r2 = extractSayNotSay('## What we can say\nA\n\n## What we can\'t say\nB\n'); return r.say.trim() === 'P' && r.notSay.trim() === 'NP' && r2.say.trim() === 'A' && r2.notSay.trim() === 'B'; })());
 t('能說／不能說：分開標題各自擷取，內文到下一個同層標題為止', (() => { const r = extractSayNotSay('## 能說\n段落一\n\n## 不能說\n段落二\n\n## 其他\n段落三'); return r.say.trim() === '段落一' && r.notSay.trim() === '段落二'; })());
 t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒有相關段落').say === null && extractSayNotSay('# 標題\n沒有相關段落').notSay === null);
 
@@ -142,7 +143,9 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
     matrix: [{ executorModel: 'm1' }, { executorModel: 'm2' }],
   };
   const pv = buildPreview(fakeCfg, { gaugeDir: '/nonexistent-sg-preview-dir' });
-  t('buildPreview 成本：executions/gradings/isolation/selfcheck/trigger/matrixCells/totalCalls', pv.cost.executions === 30 && pv.cost.gradings === 30 && pv.cost.isolationChecks === 4 && pv.cost.graderSelfCheck === 2 && pv.cost.triggerRuns === 32 && pv.cost.matrixCells === 2 && pv.cost.totalCalls === 196);
+  // 口徑照引擎：矩陣 2 格（兩個不同模型）→ (30+30)×2＝120；已知答案檢查每模型 4 次×2＝8；自證整份 2 次 → 130；觸發 32 次另計（只在 --with-trigger 才花）
+  t('buildPreview 成本：executions/gradings/isolation(依模型數)/selfcheck(一次)/trigger(另計)/matrixCells/totalCalls', pv.cost.executions === 30 && pv.cost.gradings === 30 && pv.cost.isolationChecks === 8 && pv.cost.distinctModels === 2 && pv.cost.graderSelfCheck === 2 && pv.cost.triggerRuns === 32 && pv.cost.matrixCells === 2 && pv.cost.totalCalls === 130);
+  { const bo = buildPreview({ ...fakeCfg, __baselineOnly: true, skill: { name: null, path: null, __abs: null }, arms: [{ name: 'with', skill: true }, { name: 'without', skill: false }], matrix: null, trigger: null }, { gaugeDir: '/nonexistent-sg-preview-dir' }); t('buildPreview：baseline-only 只列基準組、成本只算一組', bo.arms.length === 1 && bo.arms[0].kind === 'none' && bo.cost.arms === 1 && bo.cost.executions === 10 && bo.cost.isolationChecks === 2); }
   t('buildPreview：沒有 lock.json → lock.state=none', pv.lock.state === 'none');
   t('buildPreview：沒有 pre-registration.md → prereg.exists=false', pv.prereg.exists === false);
   t('buildPreview：checks 含 prereg-exists 且 ok=false', pv.checks.find((c) => c.id === 'prereg-exists')?.ok === false);
@@ -173,7 +176,7 @@ try {
 
   // renderPreviewHtml：核可頁最小資料
   const minimalPreview = {
-    kind: 'preview', name: 'fx', generatedAt: 'T', engine: '1.2.0',
+    kind: 'preview', name: 'fx', generatedAt: 'T', engine: '1.1.1',
     skill: { name: 's', path: '../skill/s', exists: true, description: 'd' },
     baselineOnly: false,
     arms: [
