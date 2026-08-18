@@ -2,6 +2,8 @@
 // skill-gauge 量測引擎（v1）— 單檔、零依賴、Node ≥ 18，macOS／Linux／Windows 通用。
 //
 //   node scripts/gauge.mjs check-isolation [--skill <dir>] [--root <dir>]
+//   node scripts/gauge.mjs baseline --config <gauge.json> --out <dir> [--runs N]   （還沒寫 skill 也能跑：只量不帶 skill 的模型做不做得到）
+//   node scripts/gauge.mjs compare <舊 report.json> <新 report.json>            （回歸：同一份鎖定的題目再跑一次後相減）
 //   node scripts/gauge.mjs lock    --config <gauge.json>
 //   node scripts/gauge.mjs trigger --config <gauge.json> --out <dir> [--runs N]
 //   node scripts/gauge.mjs run     --config <gauge.json> --out <dir> [--runs N] [--root <dir>] [--parallel N]
@@ -178,11 +180,14 @@ function loadConfig(p) {
   const cfg = readJSON(p);
   cfg.__file = path.resolve(p);
   cfg.__dir = path.dirname(cfg.__file);
-  const need = ['name', 'skill', 'cases', 'assertions'];
+  const need = ['name', 'cases', 'assertions'];
   for (const k of need) if (!cfg[k]) die(`gauge.json 缺 ${k}`);
-  if (!cfg.skill.name || !cfg.skill.path) die('gauge.json 的 skill 要有 name 與 path（含 SKILL.md 的資料夾）');
-  cfg.skill.__abs = path.resolve(cfg.__dir, cfg.skill.path);
-  if (!fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))) die(`找不到 ${cfg.skill.__abs}/SKILL.md`);
+  cfg.__baselineOnly = !cfg.skill || !cfg.skill.path;
+  if (!cfg.__baselineOnly) {
+    if (!cfg.skill.name) die('gauge.json 的 skill 要有 name');
+    cfg.skill.__abs = path.resolve(cfg.__dir, cfg.skill.path);
+    if (!fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))) die(`找不到 ${cfg.skill.__abs}/SKILL.md`);
+  } else cfg.skill = { name: null, path: null, __abs: null };
   cfg.runs = Number(cfg.runs || 3);
   cfg.arms = cfg.arms || [{ name: 'with', skill: true }, { name: 'without', skill: false }];
   for (const arm of cfg.arms) if (arm.skillPath) arm.__abs = path.resolve(cfg.__dir, arm.skillPath);
@@ -205,7 +210,7 @@ function lockInputs(cfg) {
   add('gauge.json', cfg.__file);
   const pre = path.join(cfg.__dir, 'pre-registration.md');
   if (fs.existsSync(pre)) add('pre-registration.md', pre);
-  for (const rel of listFilesRec(cfg.skill.__abs)) add(`skill/${rel}`, path.join(cfg.skill.__abs, rel));
+  if (cfg.skill.__abs) for (const rel of listFilesRec(cfg.skill.__abs)) add(`skill/${rel}`, path.join(cfg.skill.__abs, rel));
   for (const arm of cfg.arms) if (arm.__abs) for (const rel of listFilesRec(arm.__abs)) add(`arm-${arm.name}/${rel}`, path.join(arm.__abs, rel));
   for (const c of cfg.cases) { add(`case/${c.id}/prompt`, path.resolve(cfg.__dir, c.promptFile)); c.__materials.forEach((m, i) => add(`case/${c.id}/material-${i}`, m)); }
   return { lockedAt: new Date().toISOString(), entries };
@@ -428,6 +433,7 @@ function baselineVerdict(cfg, outDir) {
     verdict: validRuns === 0 ? 'NO-DATA' : allPass ? 'STOP' : 'CONTINUE',
     note: validRuns === 0 ? '基準組沒有有效 run（作廢或失敗），先補跑' : allPass
       ? '基準組（不帶 skill）每條計分檢查每次都過：這組題／這把尺測不出 skill 的貢獻——要嘛模型本來就會、要嘛題目太鬆。改題或停案，不要靠多跑幾次。'
+      : cfg.__baselineOnly ? `不帶 skill 的模型在 ${weak.length} 條檢查上沒全過（${weak.join('、')}）——這幾條就是 skill 值得補的地方；寫了 skill 之後補上 skill.path，再量帶 skill 那組。`
       : `基準組在 ${weak.length} 條檢查上沒全過，帶 skill 那組有空間顯出差別；繼續跑。` };
 }
 
@@ -514,6 +520,16 @@ function buildReport(cfg, outDir) {
   if (fs.existsSync(bl)) report.baseline = readJSON(bl);
   const trig = path.join(outDir, 'trigger.json');
   if (fs.existsSync(trig)) report.trigger = readJSON(trig);
+  // 下一步（三岔路）：由旗標與停案判定推導，餵回建立迴圈
+  const next = [];
+  if (report.baseline?.verdict === 'STOP') next.push('停案或退役：不帶 skill 的模型在這組題上每次都做得到——要嘛 skill 對這個模型沒必要，要嘛題目太鬆。先回頭改題（更貼近真實翻車、更刁），改完重新核可＋lock 再量；改題後還是全過，就把 skill 退役或不要寫。');
+  if (report.flags.some((f) => f.startsWith('零鑑別'))) next.push('改題：零鑑別的檢查項對兩組都測不出差別，把那幾條的題目換成模型會失手的情境，或直接刪掉那條檢查。');
+  if (report.flags.some((f) => f.startsWith('帶 skill 反而'))) next.push('改 skill：帶 skill 反而較差的格子，把 report.json 裡那幾格的評分證據（runs/<題>/with/r*/grading.json 的 evidence）連同 skill 交給你建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；改完用同一份鎖定的題目再量一次，跑 `compare` 看 held／regressed／improved。');
+  if (report.flags.some((f) => f.startsWith('前置檢查偏向'))) next.push('改前置檢查：它現在含 skill 專屬格式，兩組不對等；改成兩組都做得到的檢查後重新核可＋lock。');
+  if (report.flags.some((f) => f.startsWith('同格'))) next.push('加題不加次：同一格重複 run 幾乎一樣，多跑幾次買不到新資訊；下一版把次數換成題數。');
+  if (report.trigger && report.trigger.recall != null && (report.trigger.recall < 2 / 3 || (report.trigger.falseTriggerRate ?? 0) > 1 / 3)) next.push('改描述：觸發率不到 2/3 或誤觸發超過 1/3，去改 skill 的 description（觸發只靠那段文字），改完只重跑 `trigger`。');
+  if (!next.length) next.push('保留這份報告當基準：之後 skill 改版或模型更新，用同一份鎖定的題目再跑一次，`compare` 兩份 report.json 看有沒有退步。');
+  report.nextSteps = next;
   const iso = path.join(outDir, 'isolation.json');
   if (fs.existsSync(iso)) report.isolation = readJSON(iso);
   const lock = path.join(cfg.__dir, 'lock.json');
@@ -532,7 +548,8 @@ function reportMarkdown(cfg, r) {
   const tA = r.totals[arms[0]], tB = r.totals[arms[1]];
   if (tA && tB) {
     L.push(`- 計分的檢查項：${arms[0]} 通過 ${tA.pass}/${tA.total}，${arms[1]} 通過 ${tB.pass}/${tB.total}。差 ${r.sensitivity.delta} 格；只要翻 ${r.sensitivity.flipsToReverse} 格結論就反過來${Math.abs(r.sensitivity.delta) <= 2 ? '——這個差距很小，不要當成定論' : ''}。`);
-  } else L.push('- 兩組還沒有可比的計分格（有 run 作廢或失敗）。');
+  } else if (tA && !tB || !tA && tB) { const t = tA || tB, an = tA ? arms[0] : arms[1]; L.push(`- 只有 ${an} 組有計分格：通過 ${t.pass}/${t.total}${r.baseline ? '' : '（另一組還沒跑或全數作廢）'}。`); }
+  else L.push('- 兩組都還沒有可比的計分格（run 作廢或失敗）。');
   const zero = r.flags.filter((f) => f.startsWith('零鑑別')).length, hurt = r.flags.filter((f) => f.startsWith('帶 skill 反而')).length, sim = r.flags.filter((f) => f.startsWith('同格')).length, bias = r.flags.filter((f) => f.startsWith('前置檢查偏向')).length;
   if (zero) L.push(`- 有 ${zero} 條檢查項兩組全過：這些項目測不出 skill 的差別（可能模型本來就會，或題目太鬆）。`);
   if (hurt) L.push(`- 有 ${hurt} 條檢查項帶 skill 那組反而較差，逐條看下面的表。`);
@@ -567,15 +584,44 @@ function reportMarkdown(cfg, r) {
   L.push(...(r.flags.length ? r.flags.map((f) => `- ${f}`) : ['- 無旗標']));
   if (r.invalidRuns.length) L.push('', `作廢 run（前置檢查未過，需補跑）：${r.invalidRuns.join('、')}`);
   if (r.harnessFailures.length) L.push('', `執行或評分失敗（不算受測物的結果，需補跑）：${r.harnessFailures.join('、')}`);
+  L.push('', '## 下一步（由上面的旗標推導；接回建 skill 的迴圈）', '', ...r.nextSteps.map((n) => `- ${n}`));
   L.push('', '## 這張表能說與不能說', '', '- 能說的只有上面的描述性數字，而且只限這次的條件。', '- 不能說：因果通則、外推到題組之外的任務、跨模型比較。詳細措辭以 pre-registration 的「能說／不能說」為準。', '- 有旗標的地方，結論要跟著旗標一起講。');
   return L.join('\n') + '\n';
+}
+
+// ---------- 回歸比較：兩份 report.json 相減 ----------
+function compareReports(oldR, newR) {
+  const arm = newR.arms.find((a) => a !== (newR.baseline?.arm || 'without')) || newR.arms[0];
+  const rows = []; let regressed = 0, improved = 0, held = 0;
+  const ids = new Set([...Object.keys(oldR.assertions || {}), ...Object.keys(newR.assertions || {})]);
+  for (const id of ids) {
+    const o = oldR.assertions?.[id]?.arms?.[arm], n = newR.assertions?.[id]?.arms?.[arm];
+    if (!o || !n) { rows.push({ id, note: !o ? '舊報告沒有這條' : '新報告沒有這條' }); continue; }
+    const or = o.total ? o.pass / o.total : null, nr = n.total ? n.pass / n.total : null;
+    const d = or != null && nr != null ? nr - or : null;
+    const verdict = d == null ? '無法比' : d < -1e-9 ? 'regressed' : d > 1e-9 ? 'improved' : 'held';
+    if (verdict === 'regressed') regressed++; else if (verdict === 'improved') improved++; else if (verdict === 'held') held++;
+    rows.push({ id, old: `${o.pass}/${o.total}`, new: `${n.pass}/${n.total}`, verdict });
+  }
+  const to = oldR.totals?.[arm], tn = newR.totals?.[arm];
+  const overall = regressed ? 'regressed' : improved ? 'improved' : 'held';
+  return { arm, overall, regressed, improved, held, rows, totals: { old: to ? `${to.pass}/${to.total}` : null, new: tn ? `${tn.pass}/${tn.total}` : null },
+    sameConditions: JSON.stringify(oldR.conditions?.executorModel) === JSON.stringify(newR.conditions?.executorModel) && oldR.lock?.lockedAt === newR.lock?.lockedAt,
+    note: '逐條看：任何一條 regressed 都要單獨處理，不能被總分平均掉；規模只有個位數時，一格之差可能是浮動，先看同格相似度與翻幾格反轉。' };
 }
 
 // ---------- 主程式 ----------
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
-  if (!['check-isolation', 'lock', 'trigger', 'run', 'grade', 'report', 'all'].includes(cmd)) die('用法：node scripts/gauge.mjs <check-isolation|lock|trigger|run|grade|report|all> …（見檔頭）');
+  if (!['check-isolation', 'lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'compare'].includes(cmd)) die('用法：node scripts/gauge.mjs <check-isolation|lock|baseline|trigger|run|grade|report|all|compare> …（見檔頭）');
+  if (cmd === 'compare') {
+    const [a, b] = args._.slice(1); if (!a || !b) die('用法：compare <舊 report.json> <新 report.json>');
+    const c = compareReports(readJSON(a), readJSON(b));
+    console.log(`回歸比較（${c.arm} 組）：總判定 ${c.overall}（regressed ${c.regressed}／improved ${c.improved}／held ${c.held}）；總分 ${c.totals.old} → ${c.totals.new}；${c.sameConditions ? '同一份鎖定與模型設定' : '⚠ 鎖定或執行模型設定不同，只能參考'}`);
+    for (const r of c.rows) console.log(`  ${r.id}: ${r.note || `${r.old} → ${r.new}  ${r.verdict}`}`);
+    console.log(c.note); return;
+  }
   const claudeVersion = await new Promise((res) => { const c = spawn('claude', ['--version'], { shell: IS_WIN }); let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => res(o.trim())); c.on('error', () => res(null)); });
   if (!claudeVersion) die('找不到 claude 指令，請先安裝並登入 Claude Code');
 
@@ -589,7 +635,7 @@ async function main() {
     if (!r.ok) die('已知答案檢查未通過——先停，別往下跑。最常見原因：隔離目錄的上層有 .claude/。');
     return;
   }
-  const cfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all'].includes(cmd) ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
+  const cfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline'].includes(cmd) ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
   if (cmd === 'lock') {
     const lock = lockInputs(cfg); writeJSON(path.join(cfg.__dir, 'lock.json'), lock);
     console.log(`已鎖定 ${lock.entries.length} 個輸入 → ${path.join(cfg.__dir, 'lock.json')}`); return;
@@ -598,6 +644,22 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   if (!fs.existsSync(path.join(outDir, 'gauge.json'))) fs.copyFileSync(cfg.__file, path.join(outDir, 'gauge.json'));
   const runs = Number(args.runs || cfg.runs);
+  if (cmd === 'baseline') {
+    const root = resolveRoot(args.root || cfg.root);
+    const iso = await checkIsolation({ root, skillDir: null, skillName: null, executorModel: cfg.executorModel });
+    iso.claudeVersion = claudeVersion; writeJSON(path.join(outDir, 'isolation.json'), iso);
+    if (!iso.ok) die('已知答案檢查未通過，停。');
+    const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
+    const judgeModel = args['judge-model'] || cfg.judgeModel; if (!judgeModel) die('缺評分模型');
+    await runAll(cfg, { root, outDir, runs, parallel: Number(args.parallel || 1), armNames: [base.name] });
+    await gradeAll(cfg, { root, outDir, judgeModel });
+    const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
+    const r = buildReport(cfg, outDir); writeJSON(path.join(outDir, 'report.json'), r); fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
+    console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
+    console.log(`基準量測完成：${bv.verdict}——${bv.note}\n→ ${outDir}`);
+    return;
+  }
+  if (cmd === 'all' && cfg.__baselineOnly) die('gauge.json 沒有 skill.path：只能跑 baseline（量不帶 skill 的模型做不做得到）；要量 skill 效果請補 skill.path 再 lock。');
   if (cmd === 'trigger') { const root = resolveRoot(args.root || cfg.root); const s = await runTrigger(cfg, { root, outDir, runs: Number(args.runs || cfg.trigger?.runs || 3) }); console.log(JSON.stringify(s && { should: s.should, shouldNot: s.shouldNot, recall: s.recall, falseTriggerRate: s.falseTriggerRate }, null, 2)); return; }
   if (cmd === 'run' || cmd === 'all') {
     const lk = verifyLock(cfg, path.join(cfg.__dir, 'lock.json'));
@@ -606,6 +668,7 @@ async function main() {
     const iso = await checkIsolation({ root, skillDir: cfg.skill.__abs, skillName: cfg.skill.name, executorModel: cfg.executorModel });
     iso.claudeVersion = claudeVersion; writeJSON(path.join(outDir, 'isolation.json'), iso);
     if (!iso.ok) die(`已知答案檢查未通過：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}。停，不開跑。`);
+    if (cmd === 'run' && cfg.__baselineOnly) args.arms = args.arms || (cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1]).name;
     log(`已知答案檢查：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}`);
     if (cmd === 'all' && args['with-trigger']) await runTrigger(cfg, { root, outDir, runs: Number(cfg.trigger?.runs || 3) });
     const parallel = Number(args.parallel || 1);

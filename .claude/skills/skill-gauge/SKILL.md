@@ -12,6 +12,7 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 
 - 找模板：repo 根目錄 `templates/`（pre-registration／case／results）。找不到（本 skill 被複製到別處）就用文末「精簡欄位表」，並告訴使用者。
 - 找受測 skill：要一個**含 SKILL.md 的資料夾路徑**（v1 只量 skill 資料夾；外掛與帶 hook 的東西量不了隔離效果，直說並記進限制）。記名稱、版本快照（commit 或日期）。
+- **還沒寫 skill、只是想知道該不該寫？** 一樣走六問（翻車案例照給），gauge.json 不填 skill，第 4 步改跑 `baseline`：只量不帶 skill 的模型做不做得到、穩不穩。答案是「不用寫」或「值得寫，而且知道要補哪幾條」——這是 skill-forge「先確認不帶 skill 真的過不了」那條鐵律，我們把它做成量測的前段。
 - 你可以讀受測 skill，**只用來理解它做什麼；不從它的本文推題目與判斷標準**——判斷標準照抄 skill 本文，兩組會全過、分不出差別（這套方法第一版就是這樣死的）。
 - 執行環境：`claude --version` 有回應＋`node --version` ≥ 18 才能自動跑；沒有的話走第 4 步的手動路。
 
@@ -62,6 +63,14 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 ## 第 5 步：寫結果
 
 讀 `report.md`（開頭「先看這裡」是引擎用資料生成的描述性摘要）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查偏向）。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
+
+## 第 6 步：下一步——把量出來的東西接回建 skill 的迴圈
+
+報告尾巴的「下一步」是引擎由旗標推導的三岔路，你照著帶使用者走，不要自己另起結論：
+- **改題**（零鑑別、前置檢查偏向、同格 run 高度相似）：改 gauge.json／材料 → 重新核可＋lock → 再量。
+- **改 skill**（帶 skill 反而較差、觸發率低）：把失分格的評分證據（`runs/<題>/with/r*/grading.json` 的 evidence）連同 skill 交給使用者建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；**你不改 skill 內容**。改完用同一份鎖定的題目再跑一次，`node <SKILL_DIR>/scripts/gauge.mjs compare <舊 report.json> <新 report.json>` 看每條 held／regressed／improved——任何一條 regressed 都要單獨講，不能被總分平均掉。
+- **停案或退役**（基準組全過）：先改題再量；改題後還是全過，就跟使用者說這個 skill 對這個模型沒必要。
+模型更新、skill 改版都用同一招：舊 report 留著，再跑、再 compare。
 
 ## 四個停止點（違反其一，整次量測標無效）
 
