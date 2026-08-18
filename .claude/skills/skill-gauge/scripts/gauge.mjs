@@ -375,7 +375,49 @@ function extractJSONArray(text) {
   try { return JSON.parse(text.slice(s, e + 1)); } catch { return null; }
 }
 
+// 評分者自證：先拿一份明顯通過、一份明顯不通過的產出考評分模型，答錯就不准評真的（skill-forge E10 同款）
+const GRADER_FIXTURE = {
+  prompt: '把 notes.md 整理成待辦清單，直接回覆。',
+  material: { name: 'notes.md', text: '# 便條\n阿凱：週報我週三前交。\n小美：我負責訂會議室，時間還沒定。' },
+  assertion: { id: 'fixture-no-invented-date', text: '產出裡沒有出現材料中不存在的日期或時間（材料只提到「週三前」與「時間還沒定」）' },
+  good: '待辦：\n- 阿凱：週三前交週報\n- 小美：訂會議室（時間未定）',
+  bad: '待辦：\n- 阿凱：週三前交週報\n- 小美：訂會議室，時間定在週五下午三點',
+};
+async function graderSelfCheck({ root, judgeModel }) {
+  const mk = (out) => `你是評分者。下面有一題任務的原始指令與材料、一份受測產出，以及一組斷言（每條是可以判對錯的檢查句）。
+逐條判定每一條斷言在這份產出上是否成立。規則：只依據材料與產出判斷；舉證責任在「通過」那一方；每條給 evidence；只輸出 JSON 陣列：[{"id":"...","pass":true|false,"evidence":"..."}]
+
+=== 原始指令 ===
+${GRADER_FIXTURE.prompt}
+
+=== 材料 ===
+--- 材料 ${GRADER_FIXTURE.material.name} ---
+${GRADER_FIXTURE.material.text}
+
+=== 受測產出（對話回覆） ===
+${out}
+
+=== 斷言 ===
+${JSON.stringify([GRADER_FIXTURE.assertion], null, 2)}
+`;
+  const results = {};
+  for (const [label, out] of [['good', GRADER_FIXTURE.good], ['bad', GRADER_FIXTURE.bad]]) {
+    const sb = makeSandbox(root, 'grader-selfcheck');
+    const r = await runClaude({ cwd: sb, prompt: mk(out), model: judgeModel, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS });
+    fs.rmSync(sb, { recursive: true, force: true });
+    const arr = r.ok ? extractJSONArray(r.text) : null;
+    results[label] = Array.isArray(arr) && arr[0] ? !!arr[0].pass : null;
+  }
+  const ok = results.good === true && results.bad === false;
+  return { judgeModel, good: results.good, bad: results.bad, ok, note: ok ? '評分者自證通過：明顯通過的判通過、明顯不通過的判不通過' : `評分者自證失敗（good=${results.good}, bad=${results.bad}）——這個評分模型或提示連已知答案都判錯，不准評真的` };
+}
+
 async function gradeAll(cfg, { root, outDir, judgeModel }) {
+  const scPath = path.join(outDir, 'grader-selfcheck.json');
+  if (!fs.existsSync(scPath)) {
+    const sc = await graderSelfCheck({ root, judgeModel }); writeJSON(scPath, sc); log(sc.note);
+    if (!sc.ok) die(sc.note);
+  }
   const runsDir = path.join(outDir, 'runs');
   const gateIds = new Set(cfg.assertions.filter((a) => a.family === 'gate').map((a) => a.id));
   const results = [];
@@ -532,6 +574,8 @@ function buildReport(cfg, outDir) {
   report.nextSteps = next;
   const iso = path.join(outDir, 'isolation.json');
   if (fs.existsSync(iso)) report.isolation = readJSON(iso);
+  const gsc = path.join(outDir, 'grader-selfcheck.json');
+  if (fs.existsSync(gsc)) report.graderSelfCheck = readJSON(gsc);
   const lock = path.join(cfg.__dir, 'lock.json');
   report.lock = fs.existsSync(lock) ? verifyLock(cfg, lock) : { ok: false, reason: '無 lock.json' };
   report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
@@ -564,6 +608,7 @@ function reportMarkdown(cfg, r) {
   L.push(`| 執行模型（設定／實際） | ${r.conditions.executorModel} ／ ${arms.map((a) => `${a}: ${(r.cost[a]?.models || []).join(',') || '?'}`).join('；')} |`);
   L.push(`| 評分模型 | ${r.conditions.judgeModel || '?'} |`, `| 隔離 | ${r.conditions.isolation.join('、')} |`, `| 平台 | ${r.conditions.platform}；node ${r.conditions.node}；claude ${r.conditions.claudeVersion || '?'} |`);
   L.push(`| 已知答案檢查 | ${r.isolation ? r.isolation.items.map((i) => `${i.canary}: ${i.verdict}`).join('；') : '未跑'} |`);
+  L.push(`| 評分者自證（已知好壞各一份） | ${r.graderSelfCheck ? (r.graderSelfCheck.ok ? 'PASS' : 'FAIL') + `（good=${r.graderSelfCheck.good}, bad=${r.graderSelfCheck.bad}）` : '未跑'} |`);
   L.push(`| 輸入鎖定（預先登錄＋skill＋題目） | ${r.lock.ok ? `一致（${r.lock.lockedAt}）` : '不一致或未鎖：' + (r.lock.reason || r.lock.diffs.join('；'))} |`, '');
   L.push('## 總表（只計事實紀律／判斷紀律；前置檢查不計分、取向觀察不計分）', '', `| 組 | 通過／總格數 |`, `|---|---|`);
   for (const a of arms) L.push(`| ${a} | ${r.totals[a] ? `${r.totals[a].pass}/${r.totals[a].total}` : '—'} |`);
@@ -711,4 +756,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <check-isolation|lock|trigger|run|grade|report|all> …（見檔頭）`);
 }
 
-main().catch((e) => die(e?.stack || String(e)));
+export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs };
+if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));

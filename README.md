@@ -21,7 +21,7 @@ git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
 3. 它先報成本（幾次執行、大約多久），你點頭才跑：引擎先做已知答案檢查確認隔離真的成立；再**先跑不帶 skill 那組**跑滿次數並盲評——每條檢查每次都過就停（這組題測不出 skill 的貢獻：模型本來就會、或題目太鬆，改題或停案，不是多跑幾次）；沒全過才跑帶 skill 那組。每一次都是家目錄以外的新目錄、只放受測 skill；每份產出交給另一個新對話盲評；最後出報告。
 4. 報告開頭有一段白話摘要（差幾格、翻幾格就反轉、哪些檢查項測不出差別、成本），它照預先登錄寫死的「能說／不能說」寫結果，不會替你把描述寫成因果。
 
-要在別的專案裡用，把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）。教具：`exercises/fixtures/meeting-notes/` 是一個十行的會議記錄 skill＋一套跑得起來的 `gauge.json`，想先看引擎長什麼樣，`cd` 進去跑 `node ../../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`。
+要在別的專案裡用，把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）。引擎自己怎麼被測、每次改版跑了什麼、還沒測到什麼，見 [docs/testing.md](docs/testing.md)。教具：`exercises/fixtures/meeting-notes/` 是一個十行的會議記錄 skill＋一套跑得起來的 `gauge.json`，想先看引擎長什麼樣，`cd` 進去跑 `node ../../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`。
 
 **用 Cowork／Claude Desktop／Claude.ai 的人**
 
