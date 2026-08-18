@@ -1,9 +1,13 @@
 {
-  "lockedAt": "2026-08-18T07:09:47.168Z",
+  "lockedAt": "2026-08-18T07:35:08.934Z",
   "entries": [
     {
       "label": "gauge.json",
       "sha256": "dd914d31d8fa3972cfd9f035acfb579a542722a3b055d0b01efec8f5be4e3dd8"
+    },
+    {
+      "label": "pre-registration.md",
+      "sha256": "3d70b14c96270ad664393926250c7dfe4e8bc45917255879ae1aaa32caf2c18b"
     },
     {
       "label": "skill/SKILL.md",
@@ -53,5 +57,7 @@
       "label": "case/case-05-pressure-exempt/material-0",
       "sha256": "d730f7b95eabae8c7b77d5effa84afeae0bd50b34b5c4ba5ddba5b5d33b614b9"
     }
-  ]
+  ],
+  "relocks": 1,
+  "engine": "1.1.0"
 }

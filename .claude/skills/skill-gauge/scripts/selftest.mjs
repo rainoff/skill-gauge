@@ -91,16 +91,18 @@ const mmd = matrixMarkdown(mx);
 t('矩陣 markdown 有總表與逐條表', /m1-default/.test(mmd) && /逐條檢查項 × 格/.test(mmd) && /STOP/.test(mmd));
 
 // 歷史：最近兩次同條件（同模型、同 effort、同鎖定）
-fs.writeFileSync(path.join(mdir, 'm1-default', 'report.json'), JSON.stringify(fakeReport(1, false)));
+fs.mkdirSync(path.join(mdir, 'm1-again'), { recursive: true }); fs.writeFileSync(path.join(mdir, 'm1-again', 'report.json'), JSON.stringify(fakeReport(1, false)));
 const hist = [
-  { kind: 'report', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, lockedAt: 'L1' },
-  { kind: 'report', outDir: path.join(mdir, 'm2-low'), executorModel: 'a', effort: 'low', lockedAt: 'L1' },
-  { kind: 'baseline', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, lockedAt: 'L1' },
-  { kind: 'report', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, lockedAt: 'L1' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
+  { kind: 'report', outDir: path.join(mdir, 'm2-low'), executorModel: 'a', effort: 'low', judgeModel: 'j', lockedAt: 'L1' },
+  { kind: 'baseline', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j2', lockedAt: 'L1' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
 ];
 const pair = lastTwoComparable(hist);
-t('歷史配對：跳過 effort 不同與 baseline，取最近兩次同條件', pair && pair[0] === hist[0] && pair[1] === hist[3]);
+t('歷史配對：跳過 effort／評分模型不同與 baseline、同目錄，取最近兩次同條件', pair && pair[0] === hist[0] && pair[1] === hist[4]);
 t('歷史配對：找不到回 null', lastTwoComparable([hist[0], hist[1]]) === null);
+t('compare：評分模型不同＝條件不同', compareReports({ ...mk([3, 1, 2]), conditions: { executorModel: 'm', judgeModel: 'j1' } }, { ...mk([3, 1, 2]), conditions: { executorModel: 'm', judgeModel: 'j2' } }).sameConditions === false);
 
 // 描述優化 markdown：最佳輪、逐題表
 const dfake = { skill: 's', triggerModel: 'm', proposerModel: 'p', runsPerQuery: 2, holdout: 0.4, seed: 42, split: { train: [{ query: 'q1', shouldTrigger: true }], test: [{ query: 'q2', shouldTrigger: false }] }, rounds: [{ round: 0, source: 'current', description: 'd0', train: { passed: 0, total: 1, perQuery: [{ query: 'q1', shouldTrigger: true, fired: 0, n: 2, pass: false }] }, test: { passed: 1, total: 1, perQuery: [{ query: 'q2', shouldTrigger: false, fired: 0, n: 2, pass: true }] } }, { round: 1, source: 'proposed', description: 'd1', train: { passed: 1, total: 1, perQuery: [{ query: 'q1', shouldTrigger: true, fired: 2, n: 2, pass: true }] }, test: { passed: 1, total: 1, perQuery: [{ query: 'q2', shouldTrigger: false, fired: 0, n: 2, pass: true }] } }], best: { round: 1, description: 'd1', testScore: '1/1', trainScore: '1/1' }, note: 'n' };

@@ -19,8 +19,15 @@ const env = { ...process.env, GAUGE_CLAUDE_CMD: `${process.execPath} ${STUB}` };
 const run = (args, opts = {}) => { const r = spawnSync(process.execPath, [ENGINE, ...args, '--root', root], { env, encoding: 'utf8', ...opts }); return { code: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
 const readJ = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
-// 1. lock
+// 1. lock：新鎖成功；已有鎖不准靜默覆寫；--relock 才行（並留舊鎖）；沒有 pre-registration.md 拒鎖
+fs.rmSync(path.join(fx, 'gauge', 'lock.json'), { force: true });
+fs.rmSync(path.join(fx, 'gauge', 'history.jsonl'), { force: true }); // 本機教具可能已有實跑歷史，測試從零開始
+if (fs.existsSync(path.join(fx, 'gauge', 'runs'))) fs.rmSync(path.join(fx, 'gauge', 'runs'), { recursive: true, force: true });
+for (const f of fs.readdirSync(path.join(fx, 'gauge'))) if (f.startsWith('lock.prev-')) fs.rmSync(path.join(fx, 'gauge', f));
 let r = run(['lock', '--config', CFG]); t('lock 成功', r.code === 0, r.out.slice(-300));
+r = run(['lock', '--config', CFG]); t('已有 lock.json 時再 lock 被拒（不可靜默覆寫）', r.code !== 0 && /relock/.test(r.out));
+r = run(['lock', '--config', CFG, '--relock']); t('--relock 成功且留下舊鎖', r.code === 0 && fs.readdirSync(path.join(fx, 'gauge')).some((f) => f.startsWith('lock.prev-')) && readJ(path.join(fx, 'gauge', 'lock.json')).relocks === 1);
+{ const pre = path.join(fx, 'gauge', 'pre-registration.md'); const bak = pre + '.bak'; fs.renameSync(pre, bak); const rr = run(['lock', '--config', CFG, '--relock']); t('沒有 pre-registration.md 拒鎖', rr.code !== 0 && /pre-registration/.test(rr.out)); fs.renameSync(bak, pre); }
 // 2. all --runs 1 --with-trigger（stub 的不帶 skill 組故意失兩條 → 不會 STOP）
 const outAll = path.join(work, 'out-all');
 r = run(['all', '--config', CFG, '--out', outAll, '--runs', '1', '--with-trigger']);
@@ -38,8 +45,11 @@ t('觸發：該觸發 16 次裡 14 次（standup 題 2 次沒觸發）、不該�
 t('逐 run 明細含產出全文', Array.isArray(rep?.runs) && rep.runs.length === 15 && rep.runs.every((x) => typeof x.output === 'string'), String(rep?.runs?.length));
 t('report.html 產出且含「先看這裡」', fs.existsSync(path.join(outAll, 'report.html')) && fs.readFileSync(path.join(outAll, 'report.html'), 'utf8').includes('先看這裡'));
 t('history.jsonl 有一列', fs.existsSync(path.join(fx, 'gauge', 'history.jsonl')) && fs.readFileSync(path.join(fx, 'gauge', 'history.jsonl'), 'utf8').trim().split('\n').length === 1);
-// 3. 已跑過的不重跑：再跑一次 report 只重算
+// 3. 已跑過的不重跑：再跑一次 report 只重算；history 同目錄不重複追加
 r = run(['report', '--config', CFG, '--out', outAll]); t('report 重算成功', r.code === 0);
+t('report 重算後 history 仍只有一列（同目錄更新不追加）', fs.readFileSync(path.join(fx, 'gauge', 'history.jsonl'), 'utf8').trim().split('\n').length === 1);
+r = run(['run', '--config', CFG, '--out', outAll, '--runs', '1', '--effort', 'low']); t('同一輸出目錄換條件（effort）續跑被拒', r.code !== 0 && /別的條件/.test(r.out));
+t('壓力說詞逐字檢查有標記', readJ(path.join(outAll, 'pressure-capture.json')).every((c) => Array.isArray(c.rationalizations_verbatim)));
 // 4. matrix：兩格（用 --models 覆蓋成 stub 的兩個假模型名）
 const outM = path.join(work, 'out-matrix');
 r = run(['matrix', '--config', CFG, '--out', outM, '--runs', '1', '--models', 'stub-a,stub-b', '--efforts', 'low']);
@@ -70,7 +80,7 @@ const outB = path.join(work, 'out-baseline');
 r = run(['baseline', '--config', CFG, '--out', outB, '--runs', '1']);
 t('baseline 模式可跑', r.code === 0 && fs.existsSync(path.join(outB, 'report.json')), r.out.slice(-400));
 
-console.log(`\n${n - bad}/${n} 通過${bad ? '' : '；工作目錄 ' + work}`);
+console.log(`\n${n - bad}/${n} 通過`);
 if (!bad) { fs.rmSync(work, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
 else console.log(`（失敗，保留 ${work} 與 ${root} 供檢查）`);
 process.exit(bad ? 1 : 0);

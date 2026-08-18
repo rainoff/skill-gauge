@@ -12,3 +12,4 @@ gauge/*/runs/
 # 教具實跑產出不進 repo
 exercises/fixtures/*/gauge/runs/
 exercises/fixtures/*/gauge/history.jsonl
+exercises/fixtures/*/gauge/lock.prev-*.json

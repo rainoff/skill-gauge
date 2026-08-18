@@ -467,13 +467,13 @@ function secKeyPoints(r, arms, sens) {
 
   const flags = asArr(r.flags).map(txt);
   const count = (p) => flags.filter((f) => f.startsWith(p)).length;
-  const zero = count('零鑑別'), hurt = count('帶 skill 反而'), sim = count('同格'), bias = count('前置檢查偏向');
+  const zero = count('零鑑別'), hurt = count('帶 skill 反而'), sim = count('同格'), bias = count('前置檢查作廢集中') + count('前置檢查偏向');
   const never = count('恆不過'), noload = count('skill 沒被載入'), negfire = count('負向對照題誤觸發'), nofoot = count('看不出足跡');
   if (zero) L.push(`有 ${esc(zero)} 條檢查項兩組全過：這些項目測不出 skill 的差別（可能模型本來就會，或題目太鬆）。`);
   if (never) L.push(`有 ${esc(never)} 條檢查項兩組全不過：判斷標準可能太嚴，或量到了別的東西。`);
   if (hurt) L.push(`有 ${esc(hurt)} 條檢查項帶 skill 反而較差，逐條看下面的表。`);
   if (sim) L.push(`有 ${esc(sim)} 個格子的同格 run 高度相似，有效樣本比次數少。`);
-  if (bias) L.push('前置檢查偏向：作廢集中在某一組，兩組不對等，先修前置檢查再下結論。');
+  if (bias) L.push('前置檢查作廢集中在某一組：先去「逐份看產出」分辨是前置檢查含 skill 專屬格式（兩組不對等，先修檢查），還是那一組沒交付（拒答、只反問——這本身就是結果）。');
   if (noload) L.push(`有 ${esc(noload)} 條旗標指出 skill 沒被載入——那幾次量到的不是「帶 skill」。`);
   if (negfire) L.push(`負向對照題誤觸發：不該出手的場景也出手了，看下面的足跡段。`);
   if (nofoot) L.push('看不出足跡：帶 skill 那組沒有留下呼叫或讀取的痕跡，先確認 skill 真的有進場。');

@@ -58,13 +58,13 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 
 ## 第 4 步：跑（先報成本，再執行）
 
-先算給使用者看：題數 × 2 組 × 次數 ＝ 幾次執行，每次約 10 秒到幾分鐘（看 skill）；加上同樣次數的評分。使用者說跑再跑。
+先算給使用者看：題數 × 組數（兩組或三組）× 次數 ＝ 幾次執行，每次約 10 秒到幾分鐘（看 skill）；加上同樣次數的評分、已知答案檢查 4 次、評分者自證 2 次；有觸發測試再加題數 × 次數；矩陣再乘格數。使用者說跑再跑。
 
 - **Claude Code**：一行跑完（已知答案檢查 → **不帶 skill 那組先跑滿、盲評、套停案規則** → 帶 skill 那組 → 盲評 → 報告）：
   ```
   node <SKILL_DIR>/scripts/gauge.mjs all --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM> [--with-trigger]
   ```
-  **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。
+  **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。基準組資料不完整（有作廢或失敗）時引擎判 INCOMPLETE、不准停案，先補跑。**代價要說**：先跑基準組、再跑帶 skill 組，兩組不同時段——服務更新或負載變化會混進差距；要嚴格對照就 `--interleave`（兩組交錯、不先停案），錢多花一半。
   Windows 加 `--root D:\sg`（系統暫存目錄在使用者目錄底下，引擎會拒絕）。分段跑用 `run` / `grade` / `report`；已跑過的 run 不重跑（可續跑），要補跑就刪掉該 run 目錄再跑；`--interleave` 改回兩組交錯、不先跑基準組。**不可用 subagent 代替引擎跑兩組**——subagent 繼承你的環境，不是隔離。
 - **換模型或 effort 再量（矩陣）**：gauge.json 填 `matrix`（或 `--models a,b --efforts low,high`），一行跑完每一格（每格＝一次完整量測，含停案規則）：
   ```
@@ -75,18 +75,18 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
   ```
   node <SKILL_DIR>/scripts/gauge.mjs describe --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM>-describe [--rounds 3] [--runs 3]
   ```
-  引擎把觸發題分 train／held-out（6:4）、量目前的 description、請一個新 session 依 train 的失敗提案改寫、再量，最多幾輪；**用 held-out 分數選最佳**（避免過擬合），預設**不寫回**——報告給你最佳描述與分數，使用者要才加 `--apply`（會備份 SKILL.md、只改 description；改完 lock 會不一致，要重新核可＋lock）。held-out 只有幾題，這是描述性排名不是定論。
+  引擎把觸發題分 train／held-out（6:4）、量目前的 description、請一個新 session 依 train 的失敗提案改寫、再量，最多幾輪；**用 held-out 分數選最佳**（避免對 train 過擬合），預設**不寫回**——報告給你最佳描述與分數，使用者要才加 `--apply`（會備份 SKILL.md、只改 description；改完 lock 會不一致，要重新核可＋lock）。誠實邊界：held-out 只有幾題、而且**選擇本身用了 held-out**，所以最佳那輪的 held-out 分數偏樂觀；要當證據，換一組全新題目再跑一次 `trigger`。次數用奇數（3）避免平手（平手算有觸發）。
 - 報告除了 `report.md` 還有 `report.html`（自含、可直接開；矩陣是 `matrix.html`、描述優化是 `describe.html`）；`html --out <dir>` 可重出。每次出報告會在 gauge 目錄追加一列 `history.jsonl`；`history --config …` 列出歷次。
 - **Cowork／Desktop／Claude.ai**：跑不了引擎。照 README「不用 Claude Code 的同事怎麼跑」——你準備兩組的指令、材料與人工紀錄表，使用者自己開新對話跑，回填 results.md。
 
 ## 第 5 步：寫結果
 
-讀 `report.md`（開頭「先看這裡」是引擎用資料生成的描述性摘要）；要逐份看產出與評分證據就開 `report.html`（「逐份看產出」那一段——先看產出再看數字，不要先信總分）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查偏向、壓力下折了／過度套用）；有壓力題就把 `pressure-capture.json` 的合理化說詞逐字附上。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
+讀 `report.md`（開頭「先看這裡」是引擎用資料生成的描述性摘要）；要逐份看產出與評分證據就開 `report.html`（「逐份看產出」那一段——先看產出再看數字，不要先信總分）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查作廢集中、壓力下折了／過度套用）；有壓力題就把 `pressure-capture.json` 的合理化說詞逐字附上。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
 
 ## 第 6 步：下一步——把量出來的東西接回建 skill 的迴圈
 
 報告尾巴的「下一步」是引擎由旗標推導的三岔路，你照著帶使用者走，不要自己另起結論：
-- **改題**（零鑑別、前置檢查偏向、同格 run 高度相似）：改 gauge.json／材料 → 重新核可＋lock → 再量。
+- **改題**（零鑑別、前置檢查作廢集中且是檢查含 skill 格式、同格 run 高度相似）：改 gauge.json／材料 → 重新核可＋lock → 再量。
 - **改 skill**（帶 skill 反而較差、壓力下折了或過度套用、觸發率低）：把失分格的評分證據（`runs/<題>/with/r*/grading.json` 的 evidence）與 `pressure-capture.json` 的合理化說詞連同 skill 交給使用者建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；**你不改 skill 內容**（唯一例外是 description——那是觸發的唯一依據、屬量測範圍，`describe --apply` 才寫回）。改完用同一份鎖定的題目再跑一次，`node <SKILL_DIR>/scripts/gauge.mjs compare <舊 report.json> <新 report.json>`（或 `compare --config gauge.json` 自動拿 history 最近兩次同條件）看每條 held／regressed／improved——任何一條 regressed 都要單獨講，不能被總分平均掉。
 - **停案或退役**（基準組全過）：先改題再量；改題後還是全過，就跟使用者說這個 skill 對這個模型沒必要。
 模型更新、skill 改版都用同一招：舊 report 留著，再跑、再 compare（同模型、同 effort、同鎖定才可比；不同的話引擎會標「只能參考」）。要一次看好幾個模型就跑 `matrix`。
