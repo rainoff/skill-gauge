@@ -30,6 +30,7 @@
 | 2026-08-18 | 2f4d64e | mac | plugin 安裝：`claude plugin marketplace add <本機路徑>` → `claude plugin install skill-gauge@skill-gauge --scope local` → `claude plugin details` | 裝成功；Skills (1) skill-gauge；常駐約 380 token；測完已 uninstall＋remove | 觸發方式三種（clone／複製 skill 資料夾／plugin）都有一種實測 |
 | 2026-08-18 | c663fac | mac | codex sol（gpt-5.6-sol，xhigh，read-only）系統審查 10 項發現→修 8 項＋2 項部分；`selftest` 41/41、`e2e-stub` 34/34；環境變數白名單後 `check-isolation` 真跑 | rules PASS／skill PASS | 審查原文與處置見 session 交接檔；環境白名單不影響 claude 登入 |
 | 2026-08-18 | fcb8d44 | mac | codex sol 第二輪（對抗性複核今日變更）14 項發現→修 11 項＋3 項部分；`selftest` 46/46、`e2e-stub` 38/38（新增停案＋安全探針、鎖定語意、續跑條件）；haiku 格報告用新引擎重出（壓力題 comply 三組由「過度套用」正規化為「拒做」） | 通過 | 兩輪審查的處置表見 session 交接檔的設計審查看板 |
+| 2026-08-18 | 2c4feab | mac | 核可頁（`preview`）：`selftest` 66/66（新增能說／不能說擷取、buildPreview 成本數學、label 顯示、mdToHtml、renderPreviewHtml）；`e2e-stub` 42/42（新增未鎖定／已鎖定／不一致三態，且不需要 claude 也能跑）；教具 `PATH=/usr/bin:/bin node scripts/gauge.mjs preview --config exercises/fixtures/meeting-notes/gauge/gauge.json` | 通過；輸出 0 個 http 字樣（自含 HTML）；成本估算 45 執行＋45 評分＋4 已知答案＋2 自證＋32 觸發、矩陣 2 格＝256 次（停案時最少 144 次），與 gauge.json 的 5 題×3 組×3 次＋觸發 8+8×2＋矩陣 2 格手算一致 | v1.1 dogfood 發現第 3 步全文貼 pre-registration.md 不可讀後新增；斷言加 `label`，report.html／render.mjs 既有測試全數回歸通過 |
 
 ## 還沒測到的
 
