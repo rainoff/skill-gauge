@@ -22,11 +22,20 @@
 | 2026-08-18 | 6665229 | mac | 教具，`all --runs 1`（停案規則預設） | 基準組 3 題各 1 次全過 → STOP，未跑帶 skill 組 | 停案規則第一次實跑 |
 | 2026-08-18 | 6aa5aa4 | mac | 教具（去掉 skill），`baseline --runs 1` | 基準在 judgment-no-forced-sections 0/1 沒全過 → CONTINUE | 同題上一輪全過、這輪失手：浮動的實例 |
 | 2026-08-18 | e013d95 | mac | `selftest`；`grade` 評分者自證（opus） | 11/11；good=true／bad=false PASS | — |
-| 2026-08-18 | 本次 | mac | 教具三組（with／without／reminder 一句提醒），`all --runs 1 --interleave` | 6/6／6/6／6/6；提醒的功勞 0、內容的功勞 0 | 第三組第一次實跑；教具對 sonnet 三組全過（稅） |
+| 2026-08-18 | 3240609 | mac | 教具三組（with／without／reminder 一句提醒），`all --runs 1 --interleave` | 6/6／6/6／6/6；提醒的功勞 0、內容的功勞 0 | 第三組第一次實跑；教具對 sonnet 三組全過（稅） |
+| 2026-08-18 | 2f4d64e | mac（claude 2.1.234，node 24） | `selftest`；`e2e-stub`（假模型端到端） | 40/40；28/28 | v1.1 第一次：壓力題、矩陣、描述優化、HTML、history 全走過 |
+| 2026-08-18 | 2f4d64e | mac | 教具 `matrix --runs 2 --with-trigger --parallel 3`（sonnet／haiku 兩格；5 題含 2 壓力題、3 組、觸發 8＋8） | **sonnet 格 STOP**：基準 24/24 全過（含兩題壓力都守住），未跑帶 skill 組；觸發 14/16、誤觸發 0/16。**haiku 格 CONTINUE**：with 18/18、without 16/18、reminder 18/18（提醒的功勞 2、內容的功勞 0）；觸發 10/16、誤觸發 0/16；壓力題 comply 三組都 0/2 守住——不是折了，是**三組都拒絕交付**（硬套規則／拒做，說詞逐字擷取 6 筆）；exempt 三組 2/2；6 次作廢全在 case-04（拒答→前置檢查沒過） | 矩陣「A 停案、B 繼續」第一次真實出現；壓力題暴露「拒答算什麼」的判法問題（見下方還沒測到的） |
+| 2026-08-18 | 2f4d64e | mac | 教具 `describe --rounds 2 --runs 2`（原 description） | 第 0 輪 train 10/10、held-out 6/6 → 提前停止、不提案 | 原描述已夠好；迴圈老實地不換 |
+| 2026-08-18 | 2f4d64e→645d4b6 | mac | 弱描述示範 `describe --rounds 3 --runs 2`（`gauge-describe-demo.json`，description 故意寫成「整理文件或會議內容時使用」） | 第 0 輪 train 8/10（PRD／技術筆記濃縮誤觸發）、held-out 6/6；第 1 輪 9/10／6/6；第 2 輪 9/10／5/6；第 3 輪 10/10／5/6 → 最佳第 1 輪（held-out 同分看 train） | held-out 6 題分不出後三輪，正是「held-out 太小」的實例；提案模型 opus |
+| 2026-08-18 | 2f4d64e | mac | plugin 安裝：`claude plugin marketplace add <本機路徑>` → `claude plugin install skill-gauge@skill-gauge --scope local` → `claude plugin details` | 裝成功；Skills (1) skill-gauge；常駐約 380 token；測完已 uninstall＋remove | 觸發方式三種（clone／複製 skill 資料夾／plugin）都有一種實測 |
+| 2026-08-18 | c663fac | mac | codex sol（gpt-5.6-sol，xhigh，read-only）系統審查 10 項發現→修 8 項＋2 項部分；`selftest` 41/41、`e2e-stub` 34/34；環境變數白名單後 `check-isolation` 真跑 | rules PASS／skill PASS | 審查原文與處置見 session 交接檔；環境白名單不影響 claude 登入 |
 
 ## 還沒測到的
 
 - Windows：引擎寫了 `shell:true` 與 `--root`（拒絕 `%TEMP%`），沒實跑
 - MCP：沒有已知答案題；`--strict-mcp-config` 的效果未驗
 - 外掛（plugin）與帶 hook 的受測物：v1 不支援隔離量測
-- 引擎自己的端到端測試只在一個教具、一台機器上跑過；真 skill 的第一次量測見履歷下一列
+- 真 skill（不是教具）的第一次量測還沒發生；矩陣、描述優化、壓力題都只在教具上跑過
+- 壓力題的判法：受測者「拒絕交付、只反問」被評分者歸為 overapplied（硬套規則／拒做正當工作）並讓前置檢查作廢——這個判法是引擎第一版的選擇，只在 haiku 六次上看過，沒有第二種模型的對照
+- 假模型 e2e 只測接得起來與關鍵判定，沒有 fault-injection（執行 crash、評分壞 JSON、逾時、半數失敗）
+- 沙箱環境變數白名單：只確認 claude 登入與已知答案檢查在 mac 上照常；Windows／API key 登入／代理環境未驗
