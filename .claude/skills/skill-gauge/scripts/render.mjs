@@ -60,7 +60,7 @@ const FAMILY_ORDER = { gate: 0, fact: 1, judgment: 2, orientation: 3 };
 const CASE_TYPE = { trap: '陷阱題', clean: '乾淨對照題', negative: '負向對照題', pressure: '壓力測試題' };
 const ARM_LABEL = { with: '帶 skill', without: '不帶 skill', reminder: '一句提醒' };
 const BASELINE_VERDICT = { STOP: '停案', CONTINUE: '繼續', 'NO-DATA': '沒有有效資料' };
-const PRESSURE_VERDICT = { held: '守住', violated: '違規', overapplied: '過度套用', inconclusive: '判不出來' };
+const PRESSURE_VERDICT = { held: '守住', violated: '違規', overapplied: '過度套用', refused: '拒做／沒交付', inconclusive: '判不出來' };
 const EXPECTED_BEHAVIOR = { comply: '應照做（不豁免）', exempt: '應豁免' };
 
 const familyLabel = (f) => FAMILY_LABEL[f] || (nz(txt(f)) ? txt(f) : '未標類別');
@@ -337,6 +337,7 @@ function sensitivityOf(r, arms) {
       delta: num(s.delta),
       flipsToErase: num(s.flipsToErase),
       flipsToReverse: num(s.flipsToReverse),
+      sameDenominator: s.sameDenominator !== false,
       note: txt(s.note),
       derived: false,
     };
@@ -344,7 +345,8 @@ function sensitivityOf(r, arms) {
   const tA = asObj(asObj(r.totals)[arms[0]]), tB = asObj(asObj(r.totals)[arms[1]]);
   if (num(tA.pass) === null || num(tB.pass) === null) return null;
   const d = num(tA.pass) - num(tB.pass);
-  return { delta: d, flipsToErase: Math.abs(d), flipsToReverse: Math.abs(d) + 1, note: '', derived: true };
+  const same = num(tA.total) !== null && num(tA.total) === num(tB.total);
+  return { delta: d, flipsToErase: same ? Math.abs(d) : null, flipsToReverse: same ? Math.abs(d) + 1 : null, sameDenominator: same, note: same ? '' : '兩組總格數不同（作廢或失敗造成），不做翻格句', derived: true };
 }
 
 function heatCell(x, opts = {}) {
@@ -442,10 +444,13 @@ function secKeyPoints(r, arms, sens) {
   const hasA = passFrac(tA), hasB = passFrac(tB);
   if (hasA && hasB) {
     let s = `計分的檢查項：${esc(armSay(A))}通過 ${esc(hasA)}，${esc(armSay(B))}通過 ${esc(hasB)}。`;
-    if (sens) {
+    if (sens && sens.sameDenominator) {
       s += `差 ${esc(sens.delta)} 格；只要翻 ${esc(dash(sens.flipsToReverse))} 格結論就反過來`;
       if (Math.abs(sens.delta) <= 2) s += '——這個差距很小，不要當成定論';
+      s += '（翻格數是脆弱度計數，不是統計檢定）';
       s += sens.derived ? '（差距與翻幾格由兩組通過數當場推得）。' : '。';
+    } else if (sens) {
+      s += `差 ${esc(sens.delta)} 格，但兩組總格數不同（有作廢或失敗），不做「翻幾格反轉」句；先補跑再比。`;
     }
     L.push(s);
   } else if (hasA || hasB) {
@@ -461,7 +466,7 @@ function secKeyPoints(r, arms, sens) {
     const p = asObj(pl);
     const note = nz(txt(p.note))
       ? esc(txt(p.note))
-      : `${esc(armSay(p.arm))}比不帶多 ${esc(fmtOr(p.reminderEffect))} 格（「有被指示」的功勞）；完整 skill 比它多 ${esc(fmtOr(p.contentEffect))} 格（「內容」的功勞）`;
+      : `${esc(armSay(p.arm))}比不帶多 ${esc(fmtOr(p.reminderEffect))} 格（拆帳給「有被指示」）；完整 skill 比它多 ${esc(fmtOr(p.contentEffect))} 格（拆帳給「內容」）——這是描述性拆帳，不是因果`;
     L.push(`一句提醒（第三組） vs 內容：${note}。`);
   }
 
@@ -666,7 +671,7 @@ function secTotals(r, arms, sens) {
   if (!inner) inner = '<p class="muted">沒有可比的計分格。</p>';
 
   if (sens && arms.length > 1) {
-    inner += `<p class="note">差距（${esc(armName(arms[0]))} − ${esc(armName(arms[1]))}）＝ <strong>${esc(sens.delta)}</strong>；抹平要翻 ${esc(dash(sens.flipsToErase))} 格、反轉要翻 ${esc(dash(sens.flipsToReverse))} 格。${
+    inner += sens.sameDenominator === false ? `<p class="note">差距（${esc(armName(arms[0]))} − ${esc(armName(arms[1]))}）＝ <strong>${esc(sens.delta)}</strong>，但兩組總格數不同，不做翻格句。${esc(sens.note)}</p>` : `<p class="note">差距（${esc(armName(arms[0]))} − ${esc(armName(arms[1]))}）＝ <strong>${esc(sens.delta)}</strong>；抹平要翻 ${esc(dash(sens.flipsToErase))} 格、反轉要翻 ${esc(dash(sens.flipsToReverse))} 格。${
       sens.derived ? '（這兩個數字是用兩組通過數當場推得，報告本身沒有帶敏感度欄位。）' : esc(sens.note)
     }</p>`;
   }
@@ -699,9 +704,9 @@ ${table(['檢查項', { html: '基準組通過／總格', num: true }], perRows)
       ].map((x, i) => (i === 0 ? x : { td: x }));
     });
     inner += `<h3>有被指示 vs 指示的內容（第三組）</h3>
-<p class="note">第三組只拿到一句提醒，不給 skill 的內容。「提醒的功勞」是它比不帶多的格數，「內容的功勞」是完整 skill 比它多的格數——各只差幾格時，同樣一兩格就翻。</p>
+<p class="note">第三組只拿到一句提醒，不給 skill 的內容。「有被指示」那一欄是它比不帶多的格數，「內容」那一欄是完整 skill 比它多的格數——描述性拆帳、不是因果；各只差幾格時，同樣一兩格就翻。</p>
 ${table(
-  ['組', { html: '通過／總格', num: true }, { html: '比不帶多（提醒的功勞）', num: true }, { html: '完整 skill 比它多（內容的功勞）', num: true }, { html: '合計差', num: true }],
+  ['組', { html: '通過／總格', num: true }, { html: '比不帶多（拆帳給有被指示）', num: true }, { html: '完整 skill 比它多（拆帳給內容）', num: true }, { html: '合計差', num: true }],
   rows2
 )}`;
   }
@@ -803,12 +808,14 @@ function secPressure(r, arms) {
       const per = arms.map((a) => {
         const x = asObj(asObj(o.arms)[a]);
         if (!Object.keys(x).length) return { td: '<td class="cell none">—</td>' };
-        const held = num(x.held) ?? 0, total = num(x.total);
-        if (!total) return { td: '<td class="cell none">未跑</td>' };
+        const held = num(x.held) ?? 0, totalAll = num(x.total);
+        if (!totalAll) return { td: '<td class="cell none">未跑</td>' };
+        const total = Math.max(0, totalAll - (num(x.inconclusive) || 0)); // 分母＝有效次數（判不出來的另列）
         const rate = total ? held / total : 0;
         const extra = [
           num(x.violated) ? `違規 ${esc(x.violated)}` : null,
           num(x.overapplied) ? `過度套用 ${esc(x.overapplied)}` : null,
+          num(x.refused) ? `拒做／沒交付 ${esc(x.refused)}` : null,
           num(x.inconclusive) ? `判不出來 ${esc(x.inconclusive)}` : null,
           num(x.citedSkill) ? `引用 skill ${esc(x.citedSkill)} 次` : null,
         ].filter(Boolean).join('、');
@@ -838,23 +845,28 @@ function secPressure(r, arms) {
         const chosen = txt(o.chosen_option ?? o.chosenOption);
         const expected = txt(o.expected_option ?? o.expectedOption);
         const rats = asArr(o.rationalizations ?? o.rationalisations).map(txt).filter(Boolean);
+        const verb = asArr(o.rationalizations_verbatim ?? o.rationalizationsVerbatim);
         const worked = asArr(o.pressures_that_worked ?? o.pressuresThatWorked).map(txt).filter(Boolean);
         const dir = txt(o.direction);
         return `<details><summary><span class="rk">${esc(sid)}</span> ${esc(armName(o.arm))} · run ${esc(txt(o.run))} ${chip(
-          dir === 'overapplied' ? '過度套用' : dir === 'violated' ? '違規' : dir || '—',
-          dir === 'overapplied' ? 'warn' : 'bad'
+          dir === 'overapplied' ? '過度套用' : dir === 'violated' ? '違規' : dir === 'refused' ? '拒做／沒交付' : dir || '—',
+          dir === 'violated' ? 'bad' : 'warn'
         )} ${chosen || expected ? `<span class="dim small">選了 ${esc(chosen || '—')}，預期 ${esc(expected || '—')}</span>` : ''}</summary>
 <div class="detail-body">
-${rats.length ? `<h4>它怎麼說服自己的（逐字）</h4>${rats.map((t) => `<blockquote>${esc(t)}</blockquote>`).join('')}` : '<p class="muted">沒有留下逐字擷取。</p>'}
+${rats.length ? `<h4>它怎麼說服自己的（評分者擷取；標「非逐字」的在產出裡找不到原句）</h4>${rats.map((t, i) => `<blockquote>${esc(t)}${verb[i] === false ? ' <span class="chip warn">非逐字，產出裡找不到</span>' : ''}</blockquote>`).join('')}` : '<p class="muted">沒有留下擷取。</p>'}
 ${worked.length ? `<h4>哪些壓力起了作用</h4><p>${worked.map((t) => chip(t, 'warn')).join('')}</p>` : ''}
 </div></details>`;
       })
       .join('\n');
 
-  const violated = capture.filter((c) => txt(asObj(c).direction) !== 'overapplied');
+  const violated = capture.filter((c) => txt(asObj(c).direction) === 'violated');
+  const refused = capture.filter((c) => txt(asObj(c).direction) === 'refused');
   const over = capture.filter((c) => txt(asObj(c).direction) === 'overapplied');
   if (violated.length) {
-    inner += `<h3>合理化逐字擷取（被壓力推著違規時）</h3><p class="note">共 ${esc(violated.length)} 筆。這些句子是壓力測試最值得看的東西——它示範了規則是怎麼被說服掉的。</p>${renderCapture(violated)}`;
+    inner += `<h3>合理化擷取（被壓力推著違規時）</h3><p class="note">共 ${esc(violated.length)} 筆。這些句子是壓力測試最值得看的東西——它示範了規則是怎麼被說服掉的。</p>${renderCapture(violated)}`;
+  }
+  if (refused.length) {
+    inner += `<h3>拒做／沒交付（沒違反規則，但也沒把正當的工作做完）</h3><p class="note">共 ${esc(refused.length)} 筆。先看基準組是不是也這樣——是的話這是模型的行為、不是 skill 的。</p>${renderCapture(refused)}`;
   }
   if (over.length) {
     inner += `<h3>過度套用（不該套用的情境也照套）</h3><p class="note">共 ${esc(over.length)} 筆。守太過跟守不住一樣是問題，分開列。</p>${renderCapture(over)}`;
@@ -1066,7 +1078,7 @@ function secOutputs(r, arms) {
 function runDetails(run, assertions) {
   const o = asObj(run);
   const verdicts = asArr(o.verdicts).map(asObj);
-  const scored = verdicts.filter((v) => !FAMILY_UNSCORED.has(txt(asObj(asObj(assertions)[txt(v.id)]).family)));
+  const scored = verdicts.filter((v) => !FAMILY_UNSCORED.has(txt(asObj(asObj(assertions)[txt(v.id)]).family)) && v.pass !== null); // pass:null＝判不出來、不算分
   const passN = scored.filter((v) => v.pass).length;
   const hasFail = scored.some((v) => !v.pass) || o.gateFailed || o.harnessFailure || o.timedOut || o.ok === false;
 
@@ -1090,7 +1102,7 @@ function runDetails(run, assertions) {
     const unscored = FAMILY_UNSCORED.has(txt(meta.family));
     return [
       `<div class="wide"><code>${esc(txt(v.id))}</code>${nz(meta.text) ? `<div class="small dim">${esc(txt(meta.text))}</div>` : ''}<span class="id">${esc(familyLabel(meta.family))}${unscored ? '／不計分' : ''}</span></div>`,
-      v.pass ? '<strong>通過</strong>' : '<strong>不通過</strong>',
+      v.pass === null ? '<span class="muted">不算分（判不出來）</span>' : v.pass ? '<strong>通過</strong>' : '<strong>不通過</strong>',
       nz(v.evidence) ? `<blockquote>${esc(txt(v.evidence))}</blockquote>` : '<span class="muted">評分沒有留下引句</span>',
     ];
   });
@@ -1164,6 +1176,7 @@ export function renderMatrixHtml(matrix, opts = {}) {
   const hrefFor = (c) => {
     const dir = txt(c.outDir);
     if (!dir) return null;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(dir) || /[<>"'\s]/.test(dir) || dir.split(/[\\/]/).includes('..')) return null; // 不接受帶 scheme（javascript: 等）、引號、空白、.. 的路徑
     let rel;
     try {
       if (!path.isAbsolute(dir)) rel = path.join(dir, 'report.html');
@@ -1334,10 +1347,10 @@ export function renderDescribeHtml(describe, opts = {}) {
 
   const howto = `<p>skill 會不會在該出手的時候出手，只看它描述那一段文字。這一頁做的事：把問句分成兩堆——<strong>練習題（train）${esc(
     train.length
-  )} 題</strong>拿來改寫描述、<strong>驗收題（test）${esc(test.length)} 題</strong>全程不看，只在最後驗一次${
+  )} 題</strong>拿來改寫描述（提案模型只看得到這一堆的失敗）、<strong>驗收題（test）${esc(test.length)} 題</strong>提案模型看不到，但引擎每一輪都量它，最後用它選最佳${
     num(d.holdout) !== null ? `（保留比例 ${esc(fmtRatio(d.holdout))}）` : ''
-  }。每題各跑 ${esc(fmtOr(d.runsPerQuery))} 次，數它有沒有觸發。最佳版本用驗收題的分數選，不是用練習題的分數選——用練習題選會選到「剛好背起來」的那一版。</p>
-<p class="bar">驗收題只有 ${esc(test.length)} 題，翻一格分數就變。這裡選出來的「最佳」是這一次的最佳，不是通則。</p>`;
+  }。每題各跑 ${esc(fmtOr(d.runsPerQuery))} 次，觸發次數達一半（含平手）算有觸發。最佳版本用驗收題的分數選（同分才看練習題），不是用練習題選——用練習題選會選到「剛好背起來」的那一版。</p>
+<p class="bar">驗收題只有 ${esc(test.length)} 題，翻一格分數就變；而且「選最佳」用的就是驗收題，所以最佳那一輪的驗收分數偏樂觀。這裡選出來的「最佳」是這一次的最佳，不是通則；要當證據，換一組全新的問句再跑一次觸發測試。</p>`;
 
   const roundRows = rounds.map((r) => {
     const tr = asObj(r.train), te = asObj(r.test);
@@ -1396,7 +1409,7 @@ ${nz(best.description) ? `<pre>${esc(txt(best.description))}</pre>` : '<p class=
 
   const sections = [
     section('howto', '這一頁在做什麼', howto),
-    section('rounds', '逐輪', table(['輪', '來源', { html: '練習題', num: true }, { html: '驗收題', num: true }, '描述'], roundRows), '練習題拿來改，驗收題只在最後驗——所以看驗收題那一欄。'),
+    section('rounds', '逐輪', table(['輪', '來源', { html: '練習題', num: true }, { html: '驗收題', num: true }, '描述'], roundRows), '練習題拿來改，驗收題拿來選——所以看驗收題那一欄，並記得它偏樂觀。'),
     section('best', '選出來的描述', bestHtml),
     section('queries', '逐題明細', perQueryTable('train', train) + perQueryTable('test', test), '底色深＝符合預期（該觸發的有觸發、不該觸發的沒觸發）。'),
     section('apply', '怎麼套用', nz(d.note) ? `<p>${esc(txt(d.note))}</p>` : '', '套用之後要重跑一次觸發測試，別直接相信這一頁的分數。'),

@@ -74,7 +74,15 @@ r = run(['compare', path.join(outAll, 'report.json'), path.join(outM, mx.combos[
 t('compare 可跑', r.code === 0 && /總判定/.test(r.out));
 r = run(['history', '--config', CFG]); t('history 列表', r.code === 0 && /report/.test(r.out));
 r = run(['html', '--out', outAll]); t('html 重出', r.code === 0);
-// 7. baseline 模式（gauge.json 去掉 skill）
+// 7. 停案路徑：假模型「不帶 skill 也全對」→ STOP（exit 3）、一般題的帶 skill 組不跑，但壓力題／負向對照題的帶 skill 組照跑（安全探針）
+const outS = path.join(work, 'out-stop');
+r = spawnSync(process.execPath, [ENGINE, 'all', '--config', CFG, '--out', outS, '--runs', '1', '--root', root], { env: { ...env, GAUGE_STUB_MODE: 'perfect-baseline' }, encoding: 'utf8' });
+t('停案：exit 3', r.status === 3, ((r.stdout || '') + (r.stderr || '')).slice(-400));
+const repS = fs.existsSync(path.join(outS, 'report.json')) ? readJ(path.join(outS, 'report.json')) : null;
+t('停案：baseline.verdict=STOP', repS?.baseline?.verdict === 'STOP');
+t('停案：一般題的帶 skill 組沒跑、壓力題與負向對照題的帶 skill 組有跑（安全探針）', !fs.existsSync(path.join(outS, 'runs', 'case-01-trap', 'with')) && fs.existsSync(path.join(outS, 'runs', 'case-04-pressure-comply', 'with', 'r1', 'grading.json')) && fs.existsSync(path.join(outS, 'runs', 'case-03-negative', 'with', 'r1', 'meta.json')));
+t('停案：壓力題三組都守住→旗標「零鑑別／基準組守住」而非「折了」', repS && repS.flags.some((f) => /零鑑別：case-04|基準組守住：case-04/.test(f)) && !repS.flags.some((f) => f.startsWith('壓力下折了')));
+// 8. baseline 模式（gauge.json 去掉 skill）
 const g = readJ(CFG); delete g.skill; fs.writeFileSync(CFG, JSON.stringify(g, null, 2));
 const outB = path.join(work, 'out-baseline');
 r = run(['baseline', '--config', CFG, '--out', outB, '--runs', '1']);

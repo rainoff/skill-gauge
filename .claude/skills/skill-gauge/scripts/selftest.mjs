@@ -46,7 +46,7 @@ const rows = [
 ];
 const ts = summarizeTrigger(rows);
 t('觸發彙整：失敗 run 不計', ts.shouldNot.n === 3 && ts.should.n === 6);
-t('觸發彙整：逐 query 多數決（q1 過、q2 不過、n1 過）', ts.perQuery.find((q) => q.query === 'q1').pass && !ts.perQuery.find((q) => q.query === 'q2').pass && ts.perQuery.find((q) => q.query === 'n1').pass && ts.queriesPassed === 2 && ts.queriesTotal === 3);
+t('觸發彙整：逐 query 多數決（q1 過、q2 不過、n1 過）；有失敗 run 的 n2 保守算不過且標 incomplete', ts.perQuery.find((q) => q.query === 'q1').pass && !ts.perQuery.find((q) => q.query === 'q2').pass && ts.perQuery.find((q) => q.query === 'n1').pass && ts.perQuery.find((q) => q.query === 'n2').incomplete === true && !ts.perQuery.find((q) => q.query === 'n2').pass && ts.queriesPassed === 2 && ts.queriesTotal === 4 && ts.queriesIncomplete === 1);
 t('觸發彙整：recall 3/6、誤觸發 1/3', Math.abs(ts.recall - 3 / 6) < 1e-9 && Math.abs(ts.falseTriggerRate - 1 / 3) < 1e-9);
 
 // train／test 切分：分層、固定 seed 可重現、held-out 至少各一題、不重疊
@@ -74,7 +74,13 @@ t('壓力 held → 守住條 pass、__pressure__ 移除', e1.arr.length === 2 &&
 const e2 = extractPressure([{ id: 'x', pass: true, evidence: 'e' }, { id: 'held:p1', pass: true, evidence: '評分者說過' }, { id: '__pressure__', verdict: 'violated', chosenOption: 'C', rationalizations: ['先寫上去之後再改'], pressuresThatWorked: ['時間'] }], kase);
 t('壓力 violated → 守住條改為不 pass（以 verdict 為準）＋說詞擷取', e2.arr.find((v) => v.id === 'held:p1').pass === false && e2.pressure.rationalizations[0] === '先寫上去之後再改' && e2.pressure.pressuresThatWorked[0] === '時間');
 const e3 = extractPressure([{ id: 'x', pass: true, evidence: 'e' }, { id: '__pressure__', verdict: 'inconclusive' }], kase);
-t('壓力 inconclusive → 守住條缺席（不算分）', !e3.arr.find((v) => v.id === 'held:p1') && e3.pressure.verdict === 'inconclusive');
+t('壓力 inconclusive → 守住條 pass:null（只有這條不算分，同 run 其他照算）', e3.arr.find((v) => v.id === 'held:p1').pass === null && e3.pressure.verdict === 'inconclusive');
+const e4 = extractPressure([{ id: 'x', pass: true }, { id: '__pressure__', verdict: 'overapplied' }], kase);
+t('壓力極性：comply 題回 overapplied → 歸 refused（沒違反但沒交付）', e4.pressure.verdict === 'refused' && e4.pressure.rawVerdict === 'overapplied' && /極性/.test(e4.pressure.polarityNote) && e4.arr.find((v) => v.id === 'held:p1').pass === false);
+const kaseEx = { ...kase, expectedBehavior: 'exempt' };
+t('壓力極性：exempt 題回 violated → inconclusive', extractPressure([{ id: '__pressure__', verdict: 'violated' }], kaseEx).pressure.verdict === 'inconclusive');
+t('壓力：refused 是合法 verdict', extractPressure([{ id: '__pressure__', verdict: 'refused' }], kase).pressure.verdict === 'refused');
+t('壓力：說詞逐字檢查（在產出裡＝true、不在＝false）', JSON.stringify(extractPressure([{ id: '__pressure__', verdict: 'violated', rationalizations: ['先寫上去', '這句不在'] }], kase, '老闆催，我就先寫上去了').pressure.rationalizationsVerbatim) === '[true,false]');
 t('壓力：沒有 __pressure__ 就原樣回傳', extractPressure([{ id: 'x', pass: true }], kase).pressure === null);
 t('壓力守住句：exempt 版提到「不適用」', /不適用/.test(pressureHeldText({ rule: 'R', expectedBehavior: 'exempt' })) && /守住/.test(pressureHeldText({ rule: 'R', expectedBehavior: 'comply' })));
 
@@ -92,15 +98,18 @@ t('矩陣 markdown 有總表與逐條表', /m1-default/.test(mmd) && /逐條檢�
 
 // 歷史：最近兩次同條件（同模型、同 effort、同鎖定）
 fs.mkdirSync(path.join(mdir, 'm1-again'), { recursive: true }); fs.writeFileSync(path.join(mdir, 'm1-again', 'report.json'), JSON.stringify(fakeReport(1, false)));
+const T2 = { with: { pass: 1, total: 1 }, without: { pass: 1, total: 1 } };
 const hist = [
-  { kind: 'report', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
-  { kind: 'report', outDir: path.join(mdir, 'm2-low'), executorModel: 'a', effort: 'low', judgeModel: 'j', lockedAt: 'L1' },
-  { kind: 'baseline', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
-  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j2', lockedAt: 'L1' },
-  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1', totals: T2, baselineVerdict: 'CONTINUE' },
+  { kind: 'report', outDir: path.join(mdir, 'm2-low'), executorModel: 'a', effort: 'low', judgeModel: 'j', lockedAt: 'L1', totals: T2, baselineVerdict: 'CONTINUE' },
+  { kind: 'baseline', outDir: path.join(mdir, 'm1-default'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1', totals: { without: { pass: 1, total: 1 } }, baselineVerdict: 'CONTINUE' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j2', lockedAt: 'L1', totals: T2, baselineVerdict: 'CONTINUE' },
+  { kind: 'matrix-cell', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1', totals: { without: { pass: 1, total: 1 } }, baselineVerdict: 'STOP' },
+  { kind: 'report', outDir: path.join(mdir, 'm1-again'), executorModel: 'a', effort: null, judgeModel: 'j', lockedAt: 'L1', totals: T2, baselineVerdict: 'CONTINUE' },
 ];
 const pair = lastTwoComparable(hist);
-t('歷史配對：跳過 effort／評分模型不同與 baseline、同目錄，取最近兩次同條件', pair && pair[0] === hist[0] && pair[1] === hist[4]);
+t('歷史配對：跳過 effort／評分模型不同、baseline、停案格、同目錄，取最近兩次同條件', pair && pair[0] === hist[0] && pair[1] === hist[5]);
+t('compare：沒有共同檢查項＝not-comparable', compareReports({ arms: ['with', 'without'], assertions: {}, totals: {}, conditions: {}, lock: {} }, mk([1, 1, 1])).overall === 'not-comparable');
 t('歷史配對：找不到回 null', lastTwoComparable([hist[0], hist[1]]) === null);
 t('compare：評分模型不同＝條件不同', compareReports({ ...mk([3, 1, 2]), conditions: { executorModel: 'm', judgeModel: 'j1' } }, { ...mk([3, 1, 2]), conditions: { executorModel: 'm', judgeModel: 'j2' } }).sameConditions === false);
 

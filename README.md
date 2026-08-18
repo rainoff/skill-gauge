@@ -25,7 +25,7 @@ git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
 
 | 想知道 | 怎麼跑 | 報告 |
 |---|---|---|
-| 這條紀律在**壓力下**守不守得住（老闆催、加班、「這次先這樣」）？ | 題目加 `type: pressure`（規則、疊加的壓力、預期守住或預期不套用），跑法不變 | 報告多「壓力測試」一節；折了的每一次都把合理化說詞**逐字擷取**到 `pressure-capture.json`，交給建 skill 的工具去修 |
+| 這條紀律在**壓力下**守不守得住（老闆催、加班、「這次先這樣」）？ | 題目加 `type: pressure`（規則、疊加的壓力、預期守住或預期不套用），跑法不變 | 報告多「壓力測試」一節：守住／違反／硬套／拒做四種判定；折了或拒做的每一次都把合理化說詞擷取到 `pressure-capture.json`（逐句回產出裡驗證是不是原句），交給建 skill 的工具去修 |
 | 換**模型或 effort** 還有用嗎？對誰是稅、對誰有幫助？ | `matrix`（gauge.json 填 `matrix`，或 `--models a,b --efforts low,high`） | `matrix.md`／`matrix.html`：一列一格，各格自己的停案判定與差幾格；格與格不互相當基準 |
 | 觸發率低——**description** 怎麼改？ | `describe`：觸發題分 train／held-out，量、提案、再量，最多幾輪，held-out 選最佳；**預設不寫回**，`--apply` 才寫（只動 description） | `describe.md`／`describe.html`：逐輪分數、最佳描述、逐題 |
 | skill 改版或模型更新後**退步了沒**？ | `compare <舊 report.json> <新 report.json>`，或 `compare --config` 拿 `history.jsonl` 最近兩次同條件 | 逐條 held／regressed／improved，任何一條退步單獨講 |
