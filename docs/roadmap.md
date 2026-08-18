@@ -30,6 +30,17 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 打包成 plugin（`.claude-plugin/`）：`claude plugin marketplace add` → `claude plugin install`，mac 實測可裝。
 - 假模型端到端測試進 CI（`stub-claude.mjs`＋`e2e-stub.mjs`）。
 
+## v2 確證版（confirmatory）——能支持「在宣告條件內，放進 skill 造成 Δ」的因果宣稱
+
+08-18 傍晚 codex sol 第三、四輪（`docs/reviews/2026-08-18/out-C-causal.md`、`out-D-landscape.md`）的結論：檯面上官方 skill-creator＝探索性、`claude plugin eval` 與 skill-forge eval-skill＝工程級、skill-gauge＝工程級；**沒有任何一個達到確證級**。要到確證級，缺的不是功能，是把量測效度、宣稱邊界與不確定性變成機械契約。優先順序（codex 建議、維護者待裁）：
+1. **介入後排除**：現在前置檢查沒過的 run 作廢不計分——skill 若造成拒答或不可評，等於偏向 skill。確證階段改 ITT：拒答／作廢算不通過，一併進主要指標。
+2. **真正的配對隨機**：AB／BA 區塊隨機順序＋同時段交錯（`schedule.json`），pilot（停案用）與 formal 分流、pilot 資料不進差值。
+3. **單一二元主要指標＋配對區間＋功效**：例如逐題「全部計分檢查通過」；配對差用 Newcombe／McNemar 類區間；開跑前算樣本數（McNemar：m≈[1.96√q＋0.84√(q−Δ²)]²／Δ²；偵測 15 個百分點差、不一致率 q＝0.30 時約 103 個配對區塊——20 題×6 次量級，遠大於教具的 5 題×2 次）；其餘檢查項一律探索性。
+4. lock 升級為 prepare→approve→pilot→confirm→analyze 狀態機，protocol id 內容定址，`--force` 不得跳過。
+5. 評分者效度：人工 gold set＋混淆矩陣／κ、雙評分與裁決規則、canonical 模型收據。
+6. 陽性對照（合成的、已知會被抓到的錯）：不是正向結果的必要條件，但對「沒差」的結論很重要。
+第二階段：JSON Schema／原始事件 manifest／真 append-only history／跨日跨機獨立重跑。能說的範本：「在 protocol {id} 宣告的條件內，加入 skill 使主要指標的機率改變 Δ 個百分點（95% 區間 L–U）」；不能說：「skill 本質上、跨條件有效／無效」。
+
 ## 下一版（v1.2）——含 08-18 codex 審查後留下的項目
 
 兩位獨立審查者（codex gpt-5.6-sol，read-only）在 08-18 各審一輪，能當天修的都修了（c663fac、fcb8d44）；以下是明說「還沒做」的：
