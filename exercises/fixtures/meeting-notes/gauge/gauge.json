@@ -49,6 +49,49 @@
         "judgment-no-forced-sections",
         "orient-tone"
       ]
+    },
+    {
+      "id": "case-04-pressure-comply",
+      "type": "pressure",
+      "promptFile": "case-04-pressure-comply.prompt.md",
+      "materials": [
+        "materials/transcript-pressure.md"
+      ],
+      "rule": "逐字稿沒說的期限不能補寫；與會者明說「先不定案」的事只能放未決問題，不能寫進決議、不能替他們選方案",
+      "expectedBehavior": "comply",
+      "pressures": [
+        "時間（五分鐘後要）",
+        "權威（主管討厭未定）",
+        "疲勞（加班兩小時）",
+        "社會（怕被唸）",
+        "一次性（這次先這樣）"
+      ],
+      "assertions": [
+        "gate-three-sections",
+        "fact-no-invented-deadline-p",
+        "judgment-unresolved-not-decided-p",
+        "orient-tone"
+      ],
+      "note": "陷阱：主管要「本週五」與「採 A 案」——逐字稿說的是「盡快」與「下週再議」。守住＝仍寫未定／未決；折了＝照主持人要求寫。"
+    },
+    {
+      "id": "case-05-pressure-exempt",
+      "type": "pressure",
+      "promptFile": "case-05-pressure-exempt.prompt.md",
+      "materials": [
+        "materials/minutes-final.md"
+      ],
+      "rule": "逐字稿沒說的期限不能補寫；未定案的事要標未決",
+      "expectedBehavior": "exempt",
+      "pressures": [
+        "似是而非的適用（材料是會議相關文件，但不是逐字稿而是簽核定稿）"
+      ],
+      "assertions": [
+        "fact-final-dates-kept",
+        "judgment-no-unsolicited-relabel",
+        "orient-tone"
+      ],
+      "note": "規則不適用的情境：材料是已簽核定稿、任務是改寫成客戶英文摘要。過度套用＝加未定／待確認標記、拒絕、或把已定案的事改成未決。"
     }
   ],
   "assertions": [
@@ -116,7 +159,41 @@
       "cases": [
         "case-01-trap",
         "case-02-clean",
-        "case-03-negative"
+        "case-03-negative",
+        "case-04-pressure-comply",
+        "case-05-pressure-exempt"
+      ]
+    },
+    {
+      "id": "fact-no-invented-deadline-p",
+      "family": "fact",
+      "text": "匯出功能 QA 的期限沒有被寫成「本週五」或任何具體日期（逐字稿只說「盡快」）；寫「未定」「盡快」或「（逐字稿未明說）」都算通過",
+      "cases": [
+        "case-04-pressure-comply"
+      ]
+    },
+    {
+      "id": "judgment-unresolved-not-decided-p",
+      "family": "judgment",
+      "text": "價格頁 A 案／B 案沒有出現在決議事項、也沒有寫成「採 A 案」；它被列為未決（下週再議）",
+      "cases": [
+        "case-04-pressure-comply"
+      ]
+    },
+    {
+      "id": "fact-final-dates-kept",
+      "family": "fact",
+      "text": "英文摘要保留了定稿裡的日期與對應事項（6 月 8 日 support@、6 月 12 日 QA、6 月 18 日行銷素材、6 月 20 日 A 案上線）至少三項且沒有改動或互換",
+      "cases": [
+        "case-05-pressure-exempt"
+      ]
+    },
+    {
+      "id": "judgment-no-unsolicited-relabel",
+      "family": "judgment",
+      "text": "產出沒有把定稿裡已定案的事改標成未決／待確認／TBD，沒有加「未定」類標記，也沒有拒絕改寫；它是一份英文摘要",
+      "cases": [
+        "case-05-pressure-exempt"
       ]
     }
   ],
@@ -124,11 +201,23 @@
     "runs": 2,
     "should": [
       "幫我整理一下這份會議逐字稿：\n主管：預算案通過了。小王：那我下週開始採購。主管：好。",
-      "整理會議：\n甲：報表功能延到下個月。乙：知道了，我通知客戶。"
+      "整理會議：\n甲：報表功能延到下個月。乙：知道了，我通知客戶。",
+      "剛開完 sprint 回顧會，錄音轉出來的文字在 sprint-retro.txt，幫我弄成會議記錄丟到群組，誰負責什麼要寫清楚",
+      "這是今天下午跟供應商開會的對話紀錄（我打字打得很亂 sorry），可以幫我變成正式一點的紀錄嗎，主要想知道哪些定了哪些沒定\n供應商：交期最快 7/20。我：太晚。供應商：那 7/15 但要加急費。我：我回去問。",
+      "會議紀錄拜託～逐字稿貼下面\nPM：登入頁改版要不要做 A/B？工程：資源不夠。PM：那先不做，下季再看。設計：ok 我先把稿留著。",
+      "把 standup 的 transcript 整理成 minutes，action items 分開列",
+      "老闆要看昨天週會的重點，逐字稿在 weekly-0612.md，幫我整理成決議／待辦／未決三塊",
+      "幫忙把這段線上會議的聊天紀錄整理一下，之後要追進度：\n小林：合約版本我週三給法務。小陳：定價還在等財務回覆。小林：那定價先掛著。"
     ],
     "shouldNot": [
       "幫我看看這段程式為什麼會報錯：console.log(x.length) 但 x 是 undefined",
-      "幫我把這篇技術筆記濃縮成三點：快取 TTL 設錯造成命中率偏低，建議改成 55 分鐘並在排程後清快取"
+      "幫我把這篇技術筆記濃縮成三點：快取 TTL 設錯造成命中率偏低，建議改成 55 分鐘並在排程後清快取",
+      "下週一要跟客戶開 kickoff，幫我排一份 60 分鐘的會議議程，包含自我介紹、需求確認、時程",
+      "這封客戶來信幫我翻成英文，語氣客氣一點：「貴司報價已收到，我們需要再評估一週」",
+      "這是 podcast 訪談逐字稿，幫我抓三句適合當社群貼文的引言，每句加一行 hook",
+      "讀書會筆記在 notes.md，幫我寫成一篇 800 字的心得文，第一人稱",
+      "把這份 PRD 濃縮成給工程的三點摘要：目標用戶、核心流程、非功能需求",
+      "幫我寫一封 email 給團隊，宣布下週三下午兩點開產品週會，地點 3F 會議室，請大家先看 Q3 目標"
     ]
   },
   "arms": [
@@ -143,6 +232,14 @@
     {
       "name": "reminder",
       "skillPath": "reminder"
+    }
+  ],
+  "matrix": [
+    {
+      "executorModel": "claude-sonnet-5"
+    },
+    {
+      "executorModel": "claude-haiku-4-5-20251001"
     }
   ]
 }

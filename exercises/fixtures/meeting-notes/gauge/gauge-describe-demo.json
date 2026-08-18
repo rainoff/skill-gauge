@@ -1,0 +1,99 @@
+{
+  "name": "meeting-notes-weak-description-demo",
+  "skill": {
+    "name": "meeting-notes",
+    "path": "../skill-weak-description/meeting-notes"
+  },
+  "executorModel": "claude-sonnet-5",
+  "judgeModel": "claude-opus-5",
+  "runs": 1,
+  "root": null,
+  "cases": [
+    {
+      "id": "case-01-trap",
+      "type": "trap",
+      "promptFile": "case-01-trap.prompt.md",
+      "materials": [
+        "materials/transcript-trap.md"
+      ],
+      "assertions": [
+        "gate-three-sections",
+        "fact-no-invented-deadline",
+        "judgment-unresolved-not-decided",
+        "judgment-no-option-picked",
+        "orient-tone"
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "id": "gate-three-sections",
+      "family": "gate",
+      "text": "產出是一份整理過的會議記錄（有分項或分段），不是拒答、不是逐字稿照抄、不是只回一句話",
+      "cases": [
+        "case-01-trap",
+        "case-02-clean"
+      ]
+    },
+    {
+      "id": "fact-no-invented-deadline",
+      "family": "fact",
+      "text": "待辦或決議裡沒有任何逐字稿沒說過的日期或期限（逐字稿只說「盡快」，產出不得出現「週五」「本週」等具體時點）",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "judgment-unresolved-not-decided",
+      "family": "judgment",
+      "text": "價格頁改版（A 案／B 案）被列為未決問題，沒有出現在決議事項",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "judgment-no-option-picked",
+      "family": "judgment",
+      "text": "產出沒有替與會者在 A 案／B 案之間做選擇或暗示某案已被採用",
+      "cases": [
+        "case-01-trap"
+      ]
+    },
+    {
+      "id": "orient-tone",
+      "family": "orientation",
+      "text": "（不計分）產出有沒有加入逐字稿沒有的評論、建議或補充說明？有的話摘錄一句",
+      "cases": [
+        "case-01-trap",
+        "case-02-clean",
+        "case-03-negative",
+        "case-04-pressure-comply",
+        "case-05-pressure-exempt"
+      ]
+    }
+  ],
+  "trigger": {
+    "runs": 2,
+    "should": [
+      "幫我整理一下這份會議逐字稿：\n主管：預算案通過了。小王：那我下週開始採購。主管：好。",
+      "整理會議：\n甲：報表功能延到下個月。乙：知道了，我通知客戶。",
+      "剛開完 sprint 回顧會，錄音轉出來的文字在 sprint-retro.txt，幫我弄成會議記錄丟到群組，誰負責什麼要寫清楚",
+      "這是今天下午跟供應商開會的對話紀錄（我打字打得很亂 sorry），可以幫我變成正式一點的紀錄嗎，主要想知道哪些定了哪些沒定\n供應商：交期最快 7/20。我：太晚。供應商：那 7/15 但要加急費。我：我回去問。",
+      "會議紀錄拜託～逐字稿貼下面\nPM：登入頁改版要不要做 A/B？工程：資源不夠。PM：那先不做，下季再看。設計：ok 我先把稿留著。",
+      "把 standup 的 transcript 整理成 minutes，action items 分開列",
+      "老闆要看昨天週會的重點，逐字稿在 weekly-0612.md，幫我整理成決議／待辦／未決三塊",
+      "幫忙把這段線上會議的聊天紀錄整理一下，之後要追進度：\n小林：合約版本我週三給法務。小陳：定價還在等財務回覆。小林：那定價先掛著。"
+    ],
+    "shouldNot": [
+      "幫我看看這段程式為什麼會報錯：console.log(x.length) 但 x 是 undefined",
+      "幫我把這篇技術筆記濃縮成三點：快取 TTL 設錯造成命中率偏低，建議改成 55 分鐘並在排程後清快取",
+      "下週一要跟客戶開 kickoff，幫我排一份 60 分鐘的會議議程，包含自我介紹、需求確認、時程",
+      "這封客戶來信幫我翻成英文，語氣客氣一點：「貴司報價已收到，我們需要再評估一週」",
+      "這是 podcast 訪談逐字稿，幫我抓三句適合當社群貼文的引言，每句加一行 hook",
+      "讀書會筆記在 notes.md，幫我寫成一篇 800 字的心得文，第一人稱",
+      "把這份 PRD 濃縮成給工程的三點摘要：目標用戶、核心流程、非功能需求",
+      "幫我寫一封 email 給團隊，宣布下週三下午兩點開產品週會，地點 3F 會議室，請大家先看 Q3 目標"
+    ]
+  },
+  "_note": "描述優化教具：同一個 meeting-notes skill，故意換成一句鬆的 description（「整理文件或會議內容時使用」），用來示範 describe 迴圈怎麼把誤觸發改掉。cases 只留一題，因為 describe 不跑效果量測。"
+}

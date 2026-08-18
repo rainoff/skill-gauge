@@ -1,12 +1,12 @@
 ---
 name: skill-gauge
-description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 方法，v1）。流程＝問答收集翻車案例與量測條件 → 生出題目、預先登錄、gauge.json → 停下來等使用者核可 → 用引擎自動跑兩組（帶 skill／不帶）、盲評、出報告 → 照「能說／不能說」寫結果。使用者說「幫我量／測 ○○ skill」「這個 skill 有沒有用」「用 skill-gauge」「skill eval／評測」「量一下這個 skill」時使用；使用者只是要寫或修 skill、或一般聊天時不要用。
+description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 方法，v1.1）。流程＝問答收集翻車案例與量測條件 → 生出題目、預先登錄、gauge.json → 停下來等使用者核可 → 用引擎自動跑兩組（帶 skill／不帶）、盲評、出報告（report.md＋report.html）→ 照「能說／不能說」寫結果；也能量壓力測試（紀律在壓力下守不守得住）、多模型×effort 矩陣、觸發率與描述優化（只動 description、held-out 選最佳）、回歸比較。使用者說「幫我量／測 ○○ skill」「這個 skill 有沒有用／有沒有在做事」「用 skill-gauge」「skill eval／評測／benchmark」「量一下這個 skill」「這個 skill 換模型還有用嗎」「壓力測試這個 skill」「幫我測 description 觸發」時使用；使用者只是要寫或修 skill 的內容、或一般聊天時不要用。
 ---
 
-# skill-gauge — 幫使用者量一個 skill（v1）
+# skill-gauge — 幫使用者量一個 skill（v1.1）
 
 你做的是量測設計與執行的苦工；判斷留給人。文末四個停止點不可省——省了，量出來的東西比不測還糟。
-引擎在本 skill 資料夾的 `scripts/gauge.mjs`（Node ≥ 18，零依賴，mac／Linux／Windows 通用）。以下用 `<SKILL_DIR>` 代表本 skill 資料夾。
+引擎在本 skill 資料夾的 `scripts/gauge.mjs`（Node ≥ 18，零依賴，mac／Linux／Windows 通用）。以下用 `<SKILL_DIR>` 代表本 skill 資料夾（Claude Code 會把 `${CLAUDE_SKILL_DIR}` 換成這個路徑；用 plugin 安裝的也一樣——看不到替換就用你讀到這份 SKILL.md 的資料夾）。
 
 ## 第 0 步：確認前提（半分鐘）
 
@@ -28,7 +28,9 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 
 ## 第 2 步：生檔（預設放 `gauge/<skill名>-<YYYYMMDD>/`）
 
-- 題目：每題一個 `case-NN-<slug>.prompt.md`（**兩組逐字相同的指令**）＋材料檔放 `materials/`。至少三題：**陷阱題**（陷阱寫在 gauge.json 的 note 給人看，不進指令）；**乾淨對照題**（完整無陷阱的材料，量「會不會把好的改壞」）；**負向對照題**（不該觸發的鄰近場景）。要有壓力測試就加一題 `type: pressure`。
+- 題目：每題一個 `case-NN-<slug>.prompt.md`（**兩組逐字相同的指令**）＋材料檔放 `materials/`。至少三題：**陷阱題**（陷阱寫在 gauge.json 的 note 給人看，不進指令）；**乾淨對照題**（完整無陷阱的材料，量「會不會把好的改壞」）；**負向對照題**（不該觸發的鄰近場景）。
+- **壓力測試**（受測 skill 是「有代價的紀律」——例如「沒說的期限不能補」「先寫測試」——就要加）：`type: pressure` 的題，gauge.json 多填 `rule`（一句話寫規則）、`pressures`（疊加 3 種以上：時間、權威、沉沒成本、疲勞、社會、一次性、範圍太小、似是而非的適用……）、`expectedBehavior`（`comply`＝該守住；`exempt`＝規則其實不適用、該正確不套用——每個紀律 skill 至少配一題 exempt，防止越修越死板）。指令要像真的：具體時間、真實檔名、「直接做決定並動手」；引擎會自動加「這是真實情境，你必須選擇並動手」的前言，並自動加一條「守住規則」的判斷紀律檢查項。評分時會逐字擷取合理化說詞（`pressure-capture.json`），這份東西是交給建 skill 工具的原料。
+- **觸發題**（`trigger.should`／`shouldNot`）：只想看「有沒有被叫起來」給各 2–4 題就夠；要跑描述優化就各給 8–10 題、要像真人會打的（有檔名、有情境、有口語，不該觸發的要是鄰近的近似題，不要拿明顯無關的湊數）。
 - 題目與檢查項的來源，照優先序：①使用者的翻車案例（最有鑑別力）；②**skill 自己的宣稱**——description 與 SKILL.md 說它會做到什麼，逐字引用，量「宣稱有沒有兌現」（這是最不武斷的標準；沒翻車案例時的主來源）；③這類任務常見的失手（例：整理類會捏造事實、漏項；轉寫類會改數字）——由你提出、使用者確認，標「推測題」。**不准的只有兩件**：把 skill 規定的格式當計分項（那是前置檢查，兩組都要做得到）；對照組指令裡出現 skill 的核心指令詞。
 - **只想看它有沒有在做事（沒有翻車案例）**：一定加觸發測試（`trigger.should` 從 description 出、`shouldNot` 出鄰近的不該觸發）；報告會給三個數：觸發率、帶 skill 那組真的載入 skill 的次數、兩組產出相似度（接近同組內＝沒改變產出）。這回答「有沒有在做事」；「有沒有價值」仍看計分差距與停案規則，條件表「任務分佈」寫「題目來自 skill 宣稱，不是真實翻車」。
 - `pre-registration.md`：照模板填。條件四格、受測物、兩組定義（帶 skill 那組多的只有 `.claude/skills/<name>/`）、題組表、四類檢查項、規模（每組至少 3 次，寫死）、**能說／不能說現在寫死**。對照組誠實檢查：共用指令不含 skill 的核心指令詞；含了就在限制段寫「量到的是剩下的那一點差別」。
@@ -37,10 +39,13 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 
 `gauge.json` 欄位（範例：`exercises/fixtures/meeting-notes/gauge/gauge.json`）：
 ```
-name, skill{name, path}, executorModel, judgeModel, runs, root(可 null),
-cases[{id, type: trap|clean|negative|pressure, promptFile, materials[], assertions[ids], note}],
+name, skill{name, path}, executorModel, executorEffort(可選 low|medium|high|xhigh|max), judgeModel, runs, root(可 null),
+cases[{id, type: trap|clean|negative|pressure, promptFile, materials[], assertions[ids], note,
+       （pressure 專用）rule, pressures[], expectedBehavior: comply|exempt, expectedOption(可選)}],
 assertions[{id, family: gate|fact|judgment|orientation, text, cases[]}],
 trigger{runs, should[…該觸發的指令], shouldNot[…不該觸發的鄰近指令]}   ← 可選
+matrix[{executorModel, effort}]   ← 可選：多模型×effort 矩陣的格
+arms[{name, skill:true|false} | {name, skillPath}]   ← 可選：第三組
 ```
 
 ## 第 3 步：停——給人核可，再鎖定（不可跳過）
@@ -61,19 +66,30 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
   ```
   **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。
   Windows 加 `--root D:\sg`（系統暫存目錄在使用者目錄底下，引擎會拒絕）。分段跑用 `run` / `grade` / `report`；已跑過的 run 不重跑（可續跑），要補跑就刪掉該 run 目錄再跑；`--interleave` 改回兩組交錯、不先跑基準組。**不可用 subagent 代替引擎跑兩組**——subagent 繼承你的環境，不是隔離。
+- **換模型或 effort 再量（矩陣）**：gauge.json 填 `matrix`（或 `--models a,b --efforts low,high`），一行跑完每一格（每格＝一次完整量測，含停案規則）：
+  ```
+  node <SKILL_DIR>/scripts/gauge.mjs matrix --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM>-matrix [--with-trigger]
+  ```
+  成本＝格數 × 上面那個數。矩陣最有用的讀法是「A 模型停案、B 模型繼續」——這個 skill 對誰是稅、對誰有幫助。格與格之間不互相當基準；每格各自看差幾格、翻幾格反轉。
+- **描述優化**（觸發率低時；只動 description、不動內容）：
+  ```
+  node <SKILL_DIR>/scripts/gauge.mjs describe --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM>-describe [--rounds 3] [--runs 3]
+  ```
+  引擎把觸發題分 train／held-out（6:4）、量目前的 description、請一個新 session 依 train 的失敗提案改寫、再量，最多幾輪；**用 held-out 分數選最佳**（避免過擬合），預設**不寫回**——報告給你最佳描述與分數，使用者要才加 `--apply`（會備份 SKILL.md、只改 description；改完 lock 會不一致，要重新核可＋lock）。held-out 只有幾題，這是描述性排名不是定論。
+- 報告除了 `report.md` 還有 `report.html`（自含、可直接開；矩陣是 `matrix.html`、描述優化是 `describe.html`）；`html --out <dir>` 可重出。每次出報告會在 gauge 目錄追加一列 `history.jsonl`；`history --config …` 列出歷次。
 - **Cowork／Desktop／Claude.ai**：跑不了引擎。照 README「不用 Claude Code 的同事怎麼跑」——你準備兩組的指令、材料與人工紀錄表，使用者自己開新對話跑，回填 results.md。
 
 ## 第 5 步：寫結果
 
-讀 `report.md`（開頭「先看這裡」是引擎用資料生成的描述性摘要）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查偏向）。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
+讀 `report.md`（開頭「先看這裡」是引擎用資料生成的描述性摘要）；要逐份看產出與評分證據就開 `report.html`（「逐份看產出」那一段——先看產出再看數字，不要先信總分）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查偏向、壓力下折了／過度套用）；有壓力題就把 `pressure-capture.json` 的合理化說詞逐字附上。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
 
 ## 第 6 步：下一步——把量出來的東西接回建 skill 的迴圈
 
 報告尾巴的「下一步」是引擎由旗標推導的三岔路，你照著帶使用者走，不要自己另起結論：
 - **改題**（零鑑別、前置檢查偏向、同格 run 高度相似）：改 gauge.json／材料 → 重新核可＋lock → 再量。
-- **改 skill**（帶 skill 反而較差、觸發率低）：把失分格的評分證據（`runs/<題>/with/r*/grading.json` 的 evidence）連同 skill 交給使用者建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；**你不改 skill 內容**。改完用同一份鎖定的題目再跑一次，`node <SKILL_DIR>/scripts/gauge.mjs compare <舊 report.json> <新 report.json>` 看每條 held／regressed／improved——任何一條 regressed 都要單獨講，不能被總分平均掉。
+- **改 skill**（帶 skill 反而較差、壓力下折了或過度套用、觸發率低）：把失分格的評分證據（`runs/<題>/with/r*/grading.json` 的 evidence）與 `pressure-capture.json` 的合理化說詞連同 skill 交給使用者建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；**你不改 skill 內容**（唯一例外是 description——那是觸發的唯一依據、屬量測範圍，`describe --apply` 才寫回）。改完用同一份鎖定的題目再跑一次，`node <SKILL_DIR>/scripts/gauge.mjs compare <舊 report.json> <新 report.json>`（或 `compare --config gauge.json` 自動拿 history 最近兩次同條件）看每條 held／regressed／improved——任何一條 regressed 都要單獨講，不能被總分平均掉。
 - **停案或退役**（基準組全過）：先改題再量；改題後還是全過，就跟使用者說這個 skill 對這個模型沒必要。
-模型更新、skill 改版都用同一招：舊 report 留著，再跑、再 compare。
+模型更新、skill 改版都用同一招：舊 report 留著，再跑、再 compare（同模型、同 effort、同鎖定才可比；不同的話引擎會標「只能參考」）。要一次看好幾個模型就跑 `matrix`。
 
 ## 四個停止點（違反其一，整次量測標無效）
 

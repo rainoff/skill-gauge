@@ -8,3 +8,7 @@
 .claude/settings.local.json
 # 引擎產出的量測結果（gauge/*/runs/）預設不進 repo；要留就自己 add
 gauge/*/runs/
+
+# 教具實跑產出不進 repo
+exercises/fixtures/*/gauge/runs/
+exercises/fixtures/*/gauge/history.jsonl

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "skill-gauge",
+  "version": "1.1.0",
+  "description": "量測一個 AI skill 到底有沒有用：預先登錄鎖定、隔離兩組（帶／不帶 skill）自動跑、盲評、停案規則、壓力測試、多模型×effort 矩陣、觸發率與描述優化、回歸比較；報告出 md＋html。",
+  "author": { "name": "rainoff" },
+  "repository": "https://github.com/rainoff/skill-gauge",
+  "keywords": ["skills", "eval", "measurement", "testing", "agent-development"],
+  "skills": ["./.claude/skills/"]
+}

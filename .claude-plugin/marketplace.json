@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace.json",
+  "name": "skill-gauge",
+  "owner": { "name": "rainoff", "url": "https://github.com/rainoff" },
+  "description": "skill-gauge 自家 marketplace：一個 plugin，裝完就有 /skill-gauge 這個 skill 與量測引擎。",
+  "plugins": [
+    {
+      "name": "skill-gauge",
+      "source": "./",
+      "description": "量測一個 AI skill 到底有沒有用（skill-gauge 方法）：兩組隔離對照、盲評、停案規則、壓力測試、矩陣、描述優化、回歸比較。"
+    }
+  ]
+}

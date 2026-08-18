@@ -21,11 +21,22 @@
 
 但書：Rosenbaum 的敏感度分析是一系列著作累積的框架，不是單一一篇論文。引用時照這個措辭寫，不指向特定文章。
 
-## 下一版（v1.1）
+## 已在 v1.1 做進去的（2026-08-18）
+
+- 第三組「一句提醒／假 skill」（見上一節）——引擎的 `arms` 可加第三組，報告拆「有被指示的功勞」與「內容的功勞」。
+- 壓力測試（`type: pressure`：規則、疊加的壓力、預期 comply／exempt、合理化說詞逐字擷取）。
+- 多模型×effort 矩陣（`matrix`）、描述優化迴圈（`describe`，held-out 選最佳、預設不寫回）、回歸歷史（`history.jsonl`＋`compare --config`）。
+- 報告 HTML（`report.html`／`matrix.html`／`describe.html`，含逐份看產出）。
+- 打包成 plugin（`.claude-plugin/`）：`claude plugin marketplace add` → `claude plugin install`，mac 實測可裝。
+- 假模型端到端測試進 CI（`stub-claude.mjs`＋`e2e-stub.mjs`）。
+
+## 下一版（v1.2）
 
 - 把量測結果輸出成官方 `claude plugin eval` 的評測格式，讓想用官方引擎跑的人可以直接跑。
-- 打包成 Claude Code 外掛，放上 marketplace。讓同事用一行指令安裝，並用像 `/skill-gauge:measure` 這樣的指令觸發（名稱待定）。
+- 跨 CLI（codex）那一路：同一份題目、同一份鎖定，換執行 CLI 再跑；兩邊結果分層、不互相當基準。
 - 外掛（plugin）與帶 hook 的受測物是個問題。目前的隔離做法載不到使用者層的外掛。效果測量現在只能不隔離著跑，並且要標明這件事。之後要另外設計解法。
+- Windows 上的引擎實跑（程式寫了 `shell:true` 與 `--root`，還沒在 Windows 跑過）；MCP 的已知答案題。
+- 成本硬上限（`--max-cost-usd` 那種：撞到就中止並報部分結果）。
 
 ## Skill 的三種類型（模板裡的「類型」欄就是填這個）
 

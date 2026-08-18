@@ -2,9 +2,9 @@
 
 > 量測 AI skill 到底有沒有用的一套方法模板。gauge＝量規。
 >
-> **這是 v0**：只放三件——量測模板、一個完整的實測範例、一題練習。其餘見 [roadmap](docs/roadmap.md)。
+> **現在是 v1.1**：一個 skill＋一支量測引擎（隔離兩組、盲評、停案規則、壓力測試、多模型×effort 矩陣、觸發率與描述優化、回歸比較；報告出 md＋html）、三份模板、一個完整的實測範例、一題練習。還沒有的見 [roadmap](docs/roadmap.md)。
 
-## 最快的用法：交給你的 AI（v1）
+## 最快的用法：交給你的 AI（v1.1）
 
 這個 repo 本身就是一個 skill，還帶一支量測引擎。你不用自己填模板、不用自己開兩組跑：讓你的 AI 照著做，你只負責回答六個問題、看一眼預先登錄說「可以」，然後讀報告。
 
@@ -19,9 +19,18 @@ git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
 1. 它問你六個問題——最重要的一題是「這個 skill 讓你翻車過哪兩次」，題目只從這裡來。
 2. 它生出題目、預先登錄、`gauge.json`，然後**停下來等你說「可以」**。你說可以，它才鎖定這些輸入。
 3. 它先報成本（幾次執行、大約多久），你點頭才跑：引擎先做已知答案檢查確認隔離真的成立；再**先跑不帶 skill 那組**跑滿次數並盲評——每條檢查每次都過就停（這組題測不出 skill 的貢獻：模型本來就會、或題目太鬆，改題或停案，不是多跑幾次）；沒全過才跑帶 skill 那組。每一次都是家目錄以外的新目錄、只放受測 skill；每份產出交給另一個新對話盲評；最後出報告。
-4. 報告開頭有一段白話摘要（差幾格、翻幾格就反轉、哪些檢查項測不出差別、成本），它照預先登錄寫死的「能說／不能說」寫結果，不會替你把描述寫成因果。
+4. 報告有兩份：`report.md`（開頭一段白話摘要——差幾格、翻幾格就反轉、哪些檢查項測不出差別、成本）與 `report.html`（同一份資料的網頁版，多一段「逐份看產出」：每一次執行的產出全文、每條檢查的判定與證據引句，讓你先看產出再看數字）。它照預先登錄寫死的「能說／不能說」寫結果，不會替你把描述寫成因果。
 
-要在別的專案裡用，把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）。引擎自己怎麼被測、每次改版跑了什麼、還沒測到什麼，見 [docs/testing.md](docs/testing.md)。教具：`exercises/fixtures/meeting-notes/` 是一個十行的會議記錄 skill＋一套跑得起來的 `gauge.json`，想先看引擎長什麼樣，`cd` 進去跑 `node ../../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`。
+再往下還有四件事，都是同一份鎖定的題目上多跑幾次引擎：
+
+| 想知道 | 怎麼跑 | 報告 |
+|---|---|---|
+| 這條紀律在**壓力下**守不守得住（老闆催、加班、「這次先這樣」）？ | 題目加 `type: pressure`（規則、疊加的壓力、預期守住或預期不套用），跑法不變 | 報告多「壓力測試」一節；折了的每一次都把合理化說詞**逐字擷取**到 `pressure-capture.json`，交給建 skill 的工具去修 |
+| 換**模型或 effort** 還有用嗎？對誰是稅、對誰有幫助？ | `matrix`（gauge.json 填 `matrix`，或 `--models a,b --efforts low,high`） | `matrix.md`／`matrix.html`：一列一格，各格自己的停案判定與差幾格；格與格不互相當基準 |
+| 觸發率低——**description** 怎麼改？ | `describe`：觸發題分 train／held-out，量、提案、再量，最多幾輪，held-out 選最佳；**預設不寫回**，`--apply` 才寫（只動 description） | `describe.md`／`describe.html`：逐輪分數、最佳描述、逐題 |
+| skill 改版或模型更新後**退步了沒**？ | `compare <舊 report.json> <新 report.json>`，或 `compare --config` 拿 `history.jsonl` 最近兩次同條件 | 逐條 held／regressed／improved，任何一條退步單獨講 |
+
+要在別的專案裡用，三種裝法擇一：(a) clone 這個 repo、在裡面開 `claude`（project skill）；(b) 把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）；(c) 當 plugin 裝：`claude plugin marketplace add rainoff/skill-gauge`（repo 還是 private 時用本機路徑 `claude plugin marketplace add ./skill-gauge`）→ `claude plugin install skill-gauge@skill-gauge`（08-18 mac 實測：裝完 `claude plugin details` 列出 Skills (1) skill-gauge，常駐約 380 token）。引擎自己怎麼被測、每次改版跑了什麼、還沒測到什麼，見 [docs/testing.md](docs/testing.md)。教具：`exercises/fixtures/meeting-notes/` 是一個十行的會議記錄 skill＋一套跑得起來的 `gauge.json`（含壓力題、16 題觸發題、兩格矩陣），想先看引擎長什麼樣，`cd` 進去跑 `node ../../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`；沒有 claude 或不想花錢，`GAUGE_CLAUDE_CMD="node <repo>/.claude/skills/skill-gauge/scripts/stub-claude.mjs"` 用假模型走一遍看檔案長什麼樣。
 
 **用 Cowork／Claude Desktop／Claude.ai 的人**
 

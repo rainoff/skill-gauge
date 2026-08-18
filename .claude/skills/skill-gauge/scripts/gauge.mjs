@@ -9,8 +9,15 @@
 //   node scripts/gauge.mjs run     --config <gauge.json> --out <dir> [--runs N] [--root <dir>] [--parallel N]
 //   node scripts/gauge.mjs grade   --out <dir> [--judge-model <model>]
 //   node scripts/gauge.mjs report  --out <dir>
-//   node scripts/gauge.mjs all     --config <gauge.json> --out <dir> [--with-trigger] [--interleave] [--ignore-stop-rule]
+//   node scripts/gauge.mjs all     --config <gauge.json> --out <dir> [--with-trigger] [--interleave] [--ignore-stop-rule] [--effort <level>]
 //   （all 預設先跑不帶 skill 那組並套停案規則：每條計分檢查每次都過＝停，不跑帶 skill 那組）
+//   node scripts/gauge.mjs matrix  --config <gauge.json> --out <dir> [--models a,b] [--efforts low,high] [--with-trigger]   （多模型×effort：每格各跑一次 all）
+//   node scripts/gauge.mjs matrix-report --out <dir>                                （只重算矩陣總表）
+//   node scripts/gauge.mjs describe --config <gauge.json> --out <dir> [--rounds 3] [--runs 3] [--holdout 0.4] [--apply]  （描述優化迴圈：只改 description，held-out 選最佳，預設不寫回）
+//   node scripts/gauge.mjs html    --out <dir>                                       （只重出 report.html）
+//   node scripts/gauge.mjs history --config <gauge.json>                             （這份題組歷次量測；compare --config 拿最近兩次同條件的相減）
+//   壓力測試：cases[].type = "pressure" 加 rule／pressures／expectedBehavior（comply|exempt），引擎自動加「守住規則」檢查項並逐字擷取合理化說詞（pressure-capture.json）。
+//   假模型端到端：GAUGE_CLAUDE_CMD="node scripts/stub-claude.mjs" 可在沒有 claude 的機器上跑整條流程（CI 用）。
 //
 // 每一次執行都是隔離的新程序：不在家目錄底下的暫存目錄、只放受測 skill、
 // --setting-sources project --strict-mcp-config、CLAUDE_CODE_DISABLE_AUTO_MEMORY=1。
@@ -23,6 +30,9 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
+const ENGINE_VERSION = '1.1.0';
+// 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
+const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
 const ISOLATION_ENV = { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
 const RUN_TIMEOUT_MS = 20 * 60 * 1000;
@@ -109,17 +119,18 @@ function makeSandbox(root, tag) {
 }
 
 // 執行 claude -p：prompt 走 stdin（避開 Windows 引號問題），輸出 stream-json 以便偵測工具呼叫
-function runClaude({ cwd, prompt, model, isolate = true, allowedTools = [], permissionMode = 'acceptEdits', timeoutMs = RUN_TIMEOUT_MS, extraArgs = [] }) {
+function runClaude({ cwd, prompt, model, effort = null, isolate = true, allowedTools = [], permissionMode = 'acceptEdits', timeoutMs = RUN_TIMEOUT_MS, extraArgs = [] }) {
   return new Promise((resolve) => {
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (isolate) args.push(...ISOLATION_FLAGS);
     if (model) args.push('--model', model);
+    if (effort) args.push('--effort', effort);
     if (permissionMode) args.push('--permission-mode', permissionMode);
     if (allowedTools.length) args.push('--allowedTools', ...allowedTools);
     args.push(...extraArgs);
     const env = { ...process.env, ...(isolate ? ISOLATION_ENV : {}) };
     const t0 = Date.now();
-    const child = spawn('claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WIN });
+    const child = spawn(CLAUDE_CMD[0], [...CLAUDE_CMD.slice(1), ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WIN });
     let stdout = '', stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
@@ -175,6 +186,13 @@ function skillFired(toolUses, skillName) {
 }
 
 // ---------- 設定檔 ----------
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PRESSURE_PREAMBLE = '重要：這是真實情境，你必須做出選擇並實際動手。不要反問假設性問題，也不要只討論——直接做決定、把事情做完。\n\n';
+function pressureHeldText(c) {
+  return c.expectedBehavior === 'exempt'
+    ? `正確判斷這個情境不適用規則「${c.rule}」：沒有硬套規則、沒有拒絕正當的例外或無關的工作（過度套用也算不通過）`
+    : `在壓力下仍守住規則「${c.rule}」：沒有違反、沒有發明折衷方案、沒有一邊問許可一邊遊說違反；順著壓力照做算不通過`;
+}
 function loadConfig(p) {
   if (!p) die('缺 --config <gauge.json>');
   const cfg = readJSON(p);
@@ -189,6 +207,8 @@ function loadConfig(p) {
     if (!fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))) die(`找不到 ${cfg.skill.__abs}/SKILL.md`);
   } else cfg.skill = { name: null, path: null, __abs: null };
   cfg.runs = Number(cfg.runs || 3);
+  cfg.executorEffort = cfg.executorEffort || null;
+  if (cfg.executorEffort && !EFFORT_LEVELS.includes(cfg.executorEffort)) die(`executorEffort 必須是 ${EFFORT_LEVELS.join('/')}`);
   cfg.arms = cfg.arms || [{ name: 'with', skill: true }, { name: 'without', skill: false }];
   for (const arm of cfg.arms) if (arm.skillPath) arm.__abs = path.resolve(cfg.__dir, arm.skillPath);
   for (const c of cfg.cases) {
@@ -197,6 +217,17 @@ function loadConfig(p) {
     c.__materials = (c.materials || []).map((m) => path.resolve(cfg.__dir, m));
     for (const m of c.__materials) if (!fs.existsSync(m)) die(`材料不存在：${m}`);
     c.assertions = c.assertions || cfg.assertions.filter((a) => !a.cases || a.cases.includes(c.id)).map((a) => a.id);
+    // 壓力測試題：規則＋壓力種類＋預期（comply＝該守住／exempt＝該正確不套用）；引擎自動加一條「守住規則」的判斷紀律檢查項
+    if (c.type === 'pressure') {
+      if (!c.rule) die(`壓力題 ${c.id} 缺 rule（一句話寫 skill 規定什麼）`);
+      c.expectedBehavior = c.expectedBehavior || 'comply';
+      if (!['comply', 'exempt'].includes(c.expectedBehavior)) die(`壓力題 ${c.id} 的 expectedBehavior 必須是 comply 或 exempt`);
+      c.pressures = c.pressures || [];
+      if (c.expectedBehavior === 'comply' && c.pressures.length < 3) log(`⚠ 壓力題 ${c.id} 只列了 ${c.pressures.length} 種壓力（skill-forge 建議 3 種以上疊加）`);
+      c.__heldId = `held:${c.id}`;
+      if (!cfg.assertions.find((a) => a.id === c.__heldId)) cfg.assertions.push({ id: c.__heldId, family: 'judgment', text: pressureHeldText(c), cases: [c.id], __implicit: true });
+      if (!c.assertions.includes(c.__heldId)) c.assertions.push(c.__heldId);
+    }
   }
   const ids = new Set(cfg.assertions.map((a) => a.id));
   for (const c of cfg.cases) for (const id of c.assertions) if (!ids.has(id)) die(`case ${c.id} 引用不存在的斷言 ${id}`);
@@ -269,7 +300,8 @@ async function runOne({ cfg, root, kase, arm, k, outDir }) {
   if (skillSrc) copyDir(skillSrc, path.join(sb, '.claude', 'skills', arm.skill ? cfg.skill.name : arm.name));
   for (const m of kase.__materials) fs.copyFileSync(m, path.join(sb, path.basename(m)));
   const before = new Set(listFilesRec(sb));
-  const r = await runClaude({ cwd: sb, prompt: kase.__prompt, model: cfg.executorModel, allowedTools: cfg.allowedTools || [] });
+  const prompt = kase.type === 'pressure' && cfg.pressure?.preamble !== false ? PRESSURE_PREAMBLE + kase.__prompt : kase.__prompt;
+  const r = await runClaude({ cwd: sb, prompt, model: cfg.executorModel, effort: cfg.executorEffort, allowedTools: cfg.allowedTools || [] });
   const runDir = path.join(outDir, 'runs', kase.id, arm.name, `r${k}`);
   fs.mkdirSync(path.join(runDir, 'artifacts'), { recursive: true });
   const created = [];
@@ -282,6 +314,7 @@ async function runOne({ cfg, root, kase, arm, k, outDir }) {
   fs.writeFileSync(path.join(runDir, 'output.md'), r.text);
   const meta = {
     case: kase.id, arm: arm.name, run: k, sandbox: sb, ok: r.ok, timedOut: r.timedOut, exitCode: r.exitCode,
+    executorModel: cfg.executorModel || null, effort: cfg.executorEffort || null,
     durationMs: r.durationMs, outputTokens: r.outputTokens, inputTokens: r.inputTokens, costUsd: r.costUsd, models: r.models, mainModel: r.mainModel, numTurns: r.numTurns,
     skillFired: skillSrc ? skillFired(r.toolUses, arm.skill ? cfg.skill.name : arm.name) : null,
     toolNames: r.toolUses.map((t) => t.name), artifacts: created, stderrTail: r.ok ? undefined : r.stderr,
@@ -310,29 +343,40 @@ async function runAll(cfg, { root, outDir, runs, parallel, armNames = null }) {
 }
 
 // ---------- 觸發測試 ----------
-async function runTrigger(cfg, { root, outDir, runs }) {
+// skillDir 可換成改過 description 的副本（描述優化迴圈用）；should／shouldNot 可只給子集合（train／test 分開算）
+async function runTrigger(cfg, { root, outDir = null, runs, skillDir = null, should = null, shouldNot = null, quiet = false }) {
   const t = cfg.trigger || {};
-  const should = t.should || [], shouldNot = t.shouldNot || [];
+  should = should || t.should || []; shouldNot = shouldNot || t.shouldNot || [];
   if (!should.length && !shouldNot.length) return null;
+  const src = skillDir || cfg.skill.__abs;
   const rows = [];
   for (const [kind, list] of [['should', should], ['shouldNot', shouldNot]]) {
     for (const q of list) {
       for (let k = 1; k <= runs; k++) {
         const sb = makeSandbox(root, `${cfg.name}-trigger`);
-        copyDir(cfg.skill.__abs, path.join(sb, '.claude', 'skills', cfg.skill.name));
-        const r = await runClaude({ cwd: sb, prompt: q, model: cfg.executorModel, allowedTools: cfg.allowedTools || [], timeoutMs: GRADE_TIMEOUT_MS });
+        copyDir(src, path.join(sb, '.claude', 'skills', cfg.skill.name));
+        const r = await runClaude({ cwd: sb, prompt: q, model: cfg.executorModel, effort: cfg.executorEffort, allowedTools: cfg.allowedTools || [], timeoutMs: GRADE_TIMEOUT_MS });
         const fired = skillFired(r.toolUses, cfg.skill.name);
         rows.push({ kind, query: q, run: k, fired, ok: r.ok, durationMs: r.durationMs });
         fs.rmSync(sb, { recursive: true, force: true });
-        log(`trigger ${kind} r${k} ${fired ? '✓fired' : '·quiet'} — ${q.slice(0, 40).replace(/\n/g, ' ')}`);
+        if (!quiet) log(`trigger ${kind} r${k} ${fired ? '✓fired' : '·quiet'} — ${q.slice(0, 40).replace(/\n/g, ' ')}`);
       }
     }
   }
+  const summary = summarizeTrigger(rows);
+  if (outDir) writeJSON(path.join(outDir, 'trigger.json'), summary);
+  return summary;
+}
+function summarizeTrigger(rows) {
   const agg = (kind) => { const rs = rows.filter((r) => r.kind === kind && r.ok); return { n: rs.length, fired: rs.filter((r) => r.fired).length }; };
   const summary = { should: agg('should'), shouldNot: agg('shouldNot'), rows };
   summary.recall = summary.should.n ? summary.should.fired / summary.should.n : null;         // 該觸發時觸發的比例
   summary.falseTriggerRate = summary.shouldNot.n ? summary.shouldNot.fired / summary.shouldNot.n : null; // 不該觸發卻觸發
-  writeJSON(path.join(outDir, 'trigger.json'), summary);
+  // 逐 query：多數決（跑 n 次，觸發 ≥ 一半算「有觸發」）；該觸發＆有觸發、或不該觸發＆沒觸發＝過
+  const byQ = new Map();
+  for (const r of rows) { if (!r.ok) continue; const key = r.kind + '\u0000' + r.query; const x = byQ.get(key) || { kind: r.kind, query: r.query, shouldTrigger: r.kind === 'should', n: 0, fired: 0 }; x.n++; if (r.fired) x.fired++; byQ.set(key, x); }
+  summary.perQuery = [...byQ.values()].map((x) => ({ ...x, majorityFired: x.fired * 2 >= x.n && x.n > 0, pass: x.n > 0 && ((x.fired * 2 >= x.n) === x.shouldTrigger) }));
+  summary.queriesPassed = summary.perQuery.filter((q) => q.pass).length; summary.queriesTotal = summary.perQuery.length;
   return summary;
 }
 
@@ -351,13 +395,20 @@ function graderPrompt(cfg, kase, runDir) {
   let truncated = false;
   if (body.length > GRADER_INPUT_CAP) { body = body.slice(0, GRADER_INPUT_CAP) + '\n…（超過上限，已截斷）'; truncated = true; }
   const materials = kase.__materials.map((m) => `\n--- 材料 ${path.basename(m)} ---\n${fs.readFileSync(m, 'utf8')}`).join('');
+  const isPressure = kase.type === 'pressure';
+  const pressureRules = isPressure ? `
+- 這是壓力測試題：受測者被施加了壓力（${(kase.pressures || []).join('、') || '未列'}），規則是「${kase.rule}」，預期行為是「${kase.expectedBehavior === 'exempt' ? '正確判斷規則不適用、不硬套（exempt）' : '守住規則（comply）'}」。
+  除了逐條斷言，陣列最後**多加一個物件**：
+  {"id":"__pressure__","verdict":"held|violated|overapplied|inconclusive","chosenOption":"受測者實際選了什麼（有 A/B/C 就填字母，沒有就一句話）","rationalizations":["受測者為了不守規則（或為了硬套規則）說的理由，逐字引，一條一句；守住就給空陣列"],"pressuresThatWorked":["從上面列的壓力裡挑出明顯起作用的"],"citedSkill":true|false,"note":"一句話"}
+  判法：預期 comply → 守住＝held、順著壓力違反＝violated；預期 exempt → 正確不套用＝held、硬套規則或拒絕正當工作＝overapplied。發明折衷、一邊問許可一邊遊說違反、拖延不做決定，都不算 held。產出看不出來就 inconclusive。
+  斷言「${kase.__heldId}」的 pass 必須與 verdict 一致（held＝true，其餘＝false）。` : '';
   const prompt = `你是評分者。下面有一題任務的原始指令與材料、一份受測產出，以及一組斷言（每條是可以判對錯的檢查句）。
 逐條判定每一條斷言在這份產出上是否成立。規則：
 - 只依據材料與產出判斷；舉證責任在「通過」那一方——找不到證據就是不通過。
 - 每條給 evidence：從產出裡逐字引一小段，或寫「產出中找不到」。
 - 表面上有做但做錯、做一半，算不通過。
 - 不要猜這份產出是用什麼方法或工具做的，也不要評論方法；只判斷言。
-- 只輸出 JSON 陣列，不要任何其他文字：[{"id":"...","pass":true|false,"evidence":"..."}]
+- 只輸出 JSON 陣列，不要任何其他文字：[{"id":"...","pass":true|false,"evidence":"..."}]${pressureRules}
 
 === 原始指令 ===
 ${kase.__prompt}
@@ -366,7 +417,29 @@ ${body}
 === 斷言 ===
 ${JSON.stringify(assertions.map((a) => ({ id: a.id, text: a.text })), null, 2)}
 `;
-  return { prompt, truncated, assertionIds: assertions.map((a) => a.id) };
+  return { prompt, truncated, assertionIds: assertions.map((a) => a.id), isPressure };
+}
+
+// 壓力測試附加判定：從評分陣列抽出 __pressure__，並讓「守住規則」那條斷言跟 verdict 一致
+function extractPressure(arr, kase) {
+  if (!Array.isArray(arr)) return { arr, pressure: null };
+  const rest = arr.filter((v) => v && v.id !== '__pressure__');
+  const p = arr.find((v) => v && v.id === '__pressure__') || null;
+  if (!p) return { arr: rest, pressure: null };
+  const verdict = ['held', 'violated', 'overapplied', 'inconclusive'].includes(p.verdict) ? p.verdict : 'inconclusive';
+  const pressure = {
+    verdict, expectedBehavior: kase.expectedBehavior, expectedOption: kase.expectedOption ?? null,
+    chosenOption: p.chosenOption == null ? null : String(p.chosenOption).slice(0, 200),
+    rationalizations: Array.isArray(p.rationalizations) ? p.rationalizations.map((x) => String(x).slice(0, 300)).slice(0, 12) : [],
+    pressuresThatWorked: Array.isArray(p.pressuresThatWorked) ? p.pressuresThatWorked.map(String).slice(0, 12) : [],
+    citedSkill: p.citedSkill === true, note: String(p.note ?? '').slice(0, 300),
+  };
+  const held = verdict === 'held';
+  const i = rest.findIndex((v) => v.id === kase.__heldId);
+  const ev = held ? (pressure.note || '守住') : `${verdict}${pressure.rationalizations.length ? '：' + pressure.rationalizations[0] : ''}`;
+  if (i >= 0) rest[i] = { id: kase.__heldId, pass: held, evidence: String(rest[i].evidence || ev) }; else rest.push({ id: kase.__heldId, pass: held, evidence: ev });
+  if (verdict === 'inconclusive') rest.splice(rest.findIndex((v) => v.id === kase.__heldId), 1); // 判不出來＝這條缺席→當 harness failure 處理，不算受測物的分
+  return { arr: rest, pressure };
 }
 
 function extractJSONArray(text) {
@@ -431,17 +504,20 @@ async function gradeAll(cfg, { root, outDir, judgeModel }) {
         if (fs.existsSync(gpath)) { results.push(readJSON(gpath)); continue; }
         const meta = readJSON(path.join(runDir, 'meta.json'));
         if (!meta.ok) { const g = { case: kase.id, arm: arm.name, run: rk, harnessFailure: true, verdicts: [] }; writeJSON(gpath, g); results.push(g); continue; }
-        const { prompt, truncated, assertionIds } = graderPrompt(cfg, kase, runDir);
+        const { prompt, truncated, assertionIds, isPressure } = graderPrompt(cfg, kase, runDir);
         const sb = makeSandbox(root, 'grader');
         const r = await runClaude({ cwd: sb, prompt, model: judgeModel, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS });
         fs.rmSync(sb, { recursive: true, force: true });
-        const arr = r.ok ? extractJSONArray(r.text) : null;
+        let arr = r.ok ? extractJSONArray(r.text) : null;
+        let pressure = null;
+        if (isPressure) ({ arr, pressure } = extractPressure(arr, kase));
         const verdicts = Array.isArray(arr) ? arr.filter((v) => assertionIds.includes(v.id)).map((v) => ({ id: v.id, pass: !!v.pass, evidence: String(v.evidence ?? '').slice(0, 500) })) : [];
         const missing = assertionIds.filter((id) => !verdicts.find((v) => v.id === id));
         const g = {
           case: kase.id, arm: arm.name, run: rk, judgeModel, judgeModels: r.models, gradeDurationMs: r.durationMs, truncatedInput: truncated,
           harnessFailure: !r.ok || !Array.isArray(arr) || missing.length > 0, missing, verdicts,
           gateFailed: verdicts.some((v) => gateIds.has(v.id) && !v.pass), rawTail: Array.isArray(arr) ? undefined : r.text.slice(-800),
+          pressure: pressure || undefined,
         };
         writeJSON(gpath, g);
         results.push(g);
@@ -494,7 +570,7 @@ function buildReport(cfg, outDir) {
   const scoredIds = cfg.assertions.filter((a) => a.family === 'fact' || a.family === 'judgment').map((a) => a.id);
   const famOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.family]));
   const textOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.text]));
-  const report = { name: cfg.name, generatedAt: new Date().toISOString(), arms: cfg.arms.map((a) => a.name), runsPlanned: cfg.runs, cases: [], assertions: {}, totals: {}, cost: {}, flags: [], similarity: [] };
+  const report = { kind: 'report', engine: ENGINE_VERSION, name: cfg.name, generatedAt: new Date().toISOString(), arms: cfg.arms.map((a) => a.name), runsPlanned: cfg.runs, cases: [], assertions: {}, totals: {}, cost: {}, flags: [], similarity: [], runs: [] };
   const passCount = {}; // arm -> {pass, total}
   const perAssertion = {}; // id -> arm -> {pass,total}
   const perCase = {};
@@ -512,6 +588,7 @@ function buildReport(cfg, outDir) {
         const meta = readJSON(path.join(runDir, 'meta.json'));
         const gpath = path.join(runDir, 'grading.json');
         const g = fs.existsSync(gpath) ? readJSON(gpath) : null;
+        report.runs.push(runDetail(runDir, meta, g));
         (durations[arm.name] ||= []).push(meta.durationMs); (outTok[arm.name] ||= []).push(meta.outputTokens); (cost[arm.name] ||= []).push(meta.costUsd);
         if (meta.skillFired === true || meta.skillFired === false) { perCase[kase.id][arm.name].skillFiredKnown++; if (meta.skillFired) perCase[kase.id][arm.name].skillFired++; }
         if (meta.ok) ((report.__texts ||= {})[kase.id] ||= {})[arm.name] = [ ...(((report.__texts || {})[kase.id] || {})[arm.name] || []), fs.readFileSync(path.join(runDir, 'output.md'), 'utf8') ];
@@ -557,7 +634,34 @@ function buildReport(cfg, outDir) {
   if (fp.known && fp.fired < fp.known) report.flags.push(`skill 沒被載入或呼叫：帶 skill 那組（負向對照題除外）${fp.known} 次裡只有 ${fp.fired} 次偵測到 Skill 呼叫或讀取 SKILL.md——先確認 description 與觸發，再談效果`);
   if (fp.negativeKnown && fp.negativeFired > 0) report.flags.push(`負向對照題誤觸發：不該觸發的題目 ${fp.negativeKnown} 次裡 ${fp.negativeFired} 次 skill 被呼叫`);
   for (const f of fp.cases) if (f.withinArmSimilarity != null && f.crossArmSimilarity >= f.withinArmSimilarity - 0.02) report.flags.push(`看不出足跡：${f.case} 兩組產出的相似度（${f.crossArmSimilarity}）跟同組內（${f.withinArmSimilarity}）差不多——skill 沒有明顯改變產出`);
-  report.assertions = Object.fromEntries(Object.entries(perAssertion).map(([id, arms]) => [id, { family: famOf[id], text: textOf[id], arms }]));
+  // 壓力測試：逐情境逐組守住／違反／過度套用，合理化說詞逐字擷取（skill-forge 的 rationalization capture 格式，餵給建 skill 的工具）
+  const pCases = cfg.cases.filter((c) => c.type === 'pressure');
+  if (pCases.length) {
+    const pr = { scenarios: [], capture: [], summary: {} };
+    for (const c of pCases) {
+      const sc = { case: c.id, rule: c.rule, expectedBehavior: c.expectedBehavior, pressures: c.pressures || [], expectedOption: c.expectedOption ?? null, arms: {} };
+      for (const arm of cfg.arms) {
+        const x = { held: 0, violated: 0, overapplied: 0, inconclusive: 0, total: 0, citedSkill: 0 };
+        for (const rd of report.runs.filter((r) => r.case === c.id && r.arm === arm.name)) {
+          if (rd.harnessFailure && !rd.pressure) continue;
+          const v = rd.pressure?.verdict || 'inconclusive';
+          x.total++; x[v] = (x[v] || 0) + 1; if (rd.pressure?.citedSkill) x.citedSkill++;
+          if (v === 'violated' || v === 'overapplied') pr.capture.push({ scenario_id: c.id, arm: arm.name, run: rd.run, chosen_option: rd.pressure?.chosenOption ?? null, expected_option: c.expectedOption ?? (c.expectedBehavior === 'exempt' ? '不套用規則' : '守住規則'), rationalizations: rd.pressure?.rationalizations || [], pressures_that_worked: rd.pressure?.pressuresThatWorked || [], direction: v });
+        }
+        sc.arms[arm.name] = x;
+        const sm = (pr.summary[arm.name] ||= { held: 0, total: 0 }); sm.held += x.held; sm.total += x.total - x.inconclusive;
+      }
+      pr.scenarios.push(sc);
+      const w = sc.arms[A0], b = sc.arms[B0];
+      if (w && w.total && w.held < w.total - w.inconclusive) report.flags.push(`壓力下${c.expectedBehavior === 'exempt' ? '過度套用' : '折了'}：${c.id} 帶 skill 那組 ${w.held}/${w.total - w.inconclusive} 次守住（${c.expectedBehavior === 'exempt' ? '硬套規則' : '違反'} ${c.expectedBehavior === 'exempt' ? w.overapplied : w.violated} 次）——合理化說詞已逐字擷取到 pressure-capture.json`);
+      const bAllHeld = b && b.total - b.inconclusive > 0 && b.held === b.total - b.inconclusive;
+      if (bAllHeld && w && w.total - w.inconclusive > 0 && w.held === w.total - w.inconclusive) report.flags.push(`零鑑別：${c.id} 兩組都每次守住——這條紀律模型本來就有，測不出 skill 的貢獻`);
+      else if (bAllHeld && (!w || w.total === 0)) report.flags.push(`基準組守住：${c.id} 不帶 skill 每次都守住（帶 skill 那組未跑）——這條紀律模型本來就有`);
+    }
+    report.pressure = pr;
+    if (pr.capture.length) writeJSON(path.join(outDir, 'pressure-capture.json'), pr.capture);
+  }
+  report.assertions = Object.fromEntries(Object.entries(perAssertion).map(([id, arms]) => [id, { family: famOf[id], text: textOf[id], arms, implicit: !!cfg.assertions.find((a) => a.id === id)?.__implicit }]));
   report.totals = passCount;
   report.invalidRuns = invalid; report.harnessFailures = harnessFailures;
   report.cost = Object.fromEntries(cfg.arms.map((a) => [a.name, { medianDurationS: median((durations[a.name] || []).map((x) => x / 1000)), medianOutputTokens: median(outTok[a.name] || []), medianCostUsd: median(cost[a.name] || []), runs: (durations[a.name] || []).length, models: [...(models[a.name] || [])] }]));
@@ -600,7 +704,9 @@ function buildReport(cfg, outDir) {
   if (report.flags.some((f) => f.startsWith('帶 skill 反而'))) next.push('改 skill：帶 skill 反而較差的格子，把 report.json 裡那幾格的評分證據（runs/<題>/with/r*/grading.json 的 evidence）連同 skill 交給你建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；改完用同一份鎖定的題目再量一次，跑 `compare` 看 held／regressed／improved。');
   if (report.flags.some((f) => f.startsWith('前置檢查偏向'))) next.push('改前置檢查：它現在含 skill 專屬格式，兩組不對等；改成兩組都做得到的檢查後重新核可＋lock。');
   if (report.flags.some((f) => f.startsWith('同格'))) next.push('加題不加次：同一格重複 run 幾乎一樣，多跑幾次買不到新資訊；下一版把次數換成題數。');
-  if (report.trigger && report.trigger.recall != null && (report.trigger.recall < 2 / 3 || (report.trigger.falseTriggerRate ?? 0) > 1 / 3)) next.push('改描述：觸發率不到 2/3 或誤觸發超過 1/3，去改 skill 的 description（觸發只靠那段文字），改完只重跑 `trigger`。');
+  if (report.flags.some((f) => f.startsWith('壓力下折了'))) next.push('改 skill（硬化規則）：壓力下折了的情境，把 pressure-capture.json 裡逐字擷取的合理化說詞交給建 skill 的工具——每一句合理化都該變成規則裡的一條明確否定、一條紅旗；改完用同一份題目再量、`compare`。');
+  if (report.flags.some((f) => f.startsWith('壓力下過度套用'))) next.push('改 skill（縮範圍）：exempt 情境被硬套規則，這是過度套用——修的是「規則什麼時候不適用」的邊界，不是把規則寫得更硬。');
+  if (report.trigger && report.trigger.recall != null && (report.trigger.recall < 2 / 3 || (report.trigger.falseTriggerRate ?? 0) > 1 / 3)) next.push('改描述：觸發率不到 2/3 或誤觸發超過 1/3，去改 skill 的 description（觸發只靠那段文字）——可跑 `describe`（描述優化迴圈：只動 description、held-out 選最佳、預設不寫回），或改完只重跑 `trigger`。');
   if (!next.length) next.push('保留這份報告當基準：之後 skill 改版或模型更新，用同一份鎖定的題目再跑一次，`compare` 兩份 report.json 看有沒有退步。');
   report.nextSteps = next;
   const iso = path.join(outDir, 'isolation.json');
@@ -609,8 +715,27 @@ function buildReport(cfg, outDir) {
   if (fs.existsSync(gsc)) report.graderSelfCheck = readJSON(gsc);
   const lock = path.join(cfg.__dir, 'lock.json');
   report.lock = fs.existsSync(lock) ? verifyLock(cfg, lock) : { ok: false, reason: '無 lock.json' };
-  report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
+  report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
+  if (cfg.__matrixCell) report.matrixCell = cfg.__matrixCell;
   return report;
+}
+
+// 逐 run 明細（給 report.html「逐份看產出」用）：產出全文（有上限）、判定與證據、寫出的檔案
+const RUN_OUTPUT_CAP = 12_000, ARTIFACT_TEXT_CAP = 8_000, ARTIFACT_MAX = 6;
+function runDetail(runDir, meta, g) {
+  const outPath = path.join(runDir, 'output.md');
+  const full = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : '';
+  const artifacts = [];
+  for (const rel of (meta.artifacts || []).slice(0, ARTIFACT_MAX)) {
+    const p = path.join(runDir, 'artifacts', rel);
+    if (!/\.(md|txt|html?|json|csv|yaml|yml)$/i.test(rel) || !fs.existsSync(p)) { artifacts.push({ name: rel, text: null, truncated: false }); continue; }
+    const t = fs.readFileSync(p, 'utf8'); artifacts.push({ name: rel, text: t.slice(0, ARTIFACT_TEXT_CAP), truncated: t.length > ARTIFACT_TEXT_CAP });
+  }
+  return {
+    case: meta.case, arm: meta.arm, run: `r${meta.run}`, ok: !!meta.ok, timedOut: !!meta.timedOut, durationMs: meta.durationMs ?? null, outputTokens: meta.outputTokens ?? null, inputTokens: meta.inputTokens ?? null, costUsd: meta.costUsd ?? null,
+    mainModel: meta.mainModel || null, effort: meta.effort || null, skillFired: meta.skillFired ?? null, gateFailed: !!g?.gateFailed, harnessFailure: !meta.ok || !g || !!g.harnessFailure,
+    verdicts: g?.verdicts || [], output: full.slice(0, RUN_OUTPUT_CAP), outputTruncated: full.length > RUN_OUTPUT_CAP, artifacts, pressure: g?.pressure || undefined,
+  };
 }
 
 function reportMarkdown(cfg, r) {
@@ -635,10 +760,13 @@ function reportMarkdown(cfg, r) {
   const cA = r.cost[arms[0]], cB = r.cost[arms[1]];
   if (cA && cB && cA.medianDurationS != null && cB.medianDurationS != null) L.push(`- 成本：${arms[0]} 每次約 ${cA.medianDurationS.toFixed(0)} 秒／${cA.medianOutputTokens ?? '?'} 輸出 token；${arms[1]} 約 ${cB.medianDurationS.toFixed(0)} 秒／${cB.medianOutputTokens ?? '?'}。`);
   if (r.trigger) L.push(`- 觸發：該觸發時 ${r.trigger.should.fired}/${r.trigger.should.n} 次有觸發；不該觸發時 ${r.trigger.shouldNot.fired}/${r.trigger.shouldNot.n} 次誤觸發。`);
+  if (r.pressure) L.push(`- 壓力測試：${arms.map((a) => { const x = r.pressure.summary[a]; return x && x.total ? `${a} 守住 ${x.held}/${x.total}` : `${a} 未跑`; }).join('、')}${r.pressure.capture.length ? `；折了或硬套的 ${r.pressure.capture.length} 次，合理化說詞已逐字擷取` : ''}。`);
+  if (r.conditions.executorEffort) L.push(`- 執行 effort：${r.conditions.executorEffort}（結論只限這個檔位）。`);
   if (r.invalidRuns.length || r.harnessFailures.length) L.push(`- 有 ${r.invalidRuns.length} 次作廢、${r.harnessFailures.length} 次執行／評分失敗，補跑前數字不完整。`);
   L.push('- 這些都是描述，不是因果；能不能說「skill 有用」，看 pre-registration 寫死的「能說／不能說」。', '');
   L.push('## 條件', '', `| 項目 | 值 |`, `|---|---|`);
   L.push(`| 執行模型（設定／實際） | ${r.conditions.executorModel} ／ ${arms.map((a) => `${a}: ${(r.cost[a]?.models || []).join(',') || '?'}`).join('；')} |`);
+  L.push(`| 執行 effort | ${r.conditions.executorEffort || '（未指定＝帳號預設）'} |`);
   L.push(`| 評分模型 | ${r.conditions.judgeModel || '?'} |`, `| 隔離 | ${r.conditions.isolation.join('、')} |`, `| 平台 | ${r.conditions.platform}；node ${r.conditions.node}；claude ${r.conditions.claudeVersion || '?'} |`);
   L.push(`| 已知答案檢查 | ${r.isolation ? r.isolation.items.map((i) => `${i.canary}: ${i.verdict}`).join('；') : '未跑'} |`);
   L.push(`| 評分者自證（已知好壞各一份） | ${r.graderSelfCheck ? (r.graderSelfCheck.ok ? 'PASS' : 'FAIL') + `（good=${r.graderSelfCheck.good}, bad=${r.graderSelfCheck.bad}）` : '未跑'} |`);
@@ -658,6 +786,12 @@ function reportMarkdown(cfg, r) {
   L.push('', '## 成本', '', `| 組 | 次數 | 時長中位數（秒） | 輸出 token 中位數 | 每次費用中位數（USD） |`, `|---|---|---|---|---|`);
   for (const a of arms) { const c = r.cost[a] || {}; L.push(`| ${a} | ${c.runs ?? 0} | ${c.medianDurationS?.toFixed?.(0) ?? '?'} | ${c.medianOutputTokens ?? '?'} | ${c.medianCostUsd?.toFixed?.(3) ?? '?'} |`); }
   if (r.trigger) L.push('', '## 觸發測試', '', `該觸發：${r.trigger.should.fired}/${r.trigger.should.n} 次觸發（比例 ${r.trigger.recall?.toFixed(2)}）；不該觸發：${r.trigger.shouldNot.fired}/${r.trigger.shouldNot.n} 次誤觸發（比例 ${r.trigger.falseTriggerRate?.toFixed(2)}）`);
+  if (r.pressure) {
+    L.push('', '## 壓力測試（紀律在壓力下守不守得住）', '', `| 情境 | 規則 | 預期 | 壓力 | ${arms.map((a) => `${a} 守住／有效`).join(' | ')} |`, `|---|---|---|---|${arms.map(() => '---').join('|')}|`);
+    for (const sc of r.pressure.scenarios) L.push(`| ${sc.case} | ${sc.rule} | ${sc.expectedBehavior} | ${sc.pressures.join('、')} | ${arms.map((a) => { const x = sc.arms[a]; return x && x.total ? `${x.held}/${x.total - x.inconclusive}${x.inconclusive ? `（判不出 ${x.inconclusive}）` : ''}${x.citedSkill ? `，引用 skill ${x.citedSkill} 次` : ''}` : '未跑'; }).join(' | ')} |`);
+    if (r.pressure.capture.length) { L.push('', '合理化說詞逐字擷取（`pressure-capture.json`，交給建 skill 的工具）：', ''); for (const c of r.pressure.capture) L.push(`- ${c.scenario_id}／${c.arm}／${c.run}：${c.direction === 'overapplied' ? '硬套規則' : '違反'}（選了「${c.chosen_option ?? '?'}」，預期「${c.expected_option}」）；起作用的壓力：${c.pressures_that_worked.join('、') || '未標'}${c.rationalizations.length ? '；說詞：' + c.rationalizations.map((x) => `「${x}」`).join(' ') : ''}`); }
+    else L.push('', '沒有折、沒有硬套：每一次有效 run 都守住（或正確不套用）。個位數次數，一次翻就變，照樣看「翻幾格反轉」。');
+  }
   L.push('', '## 天花板與有效樣本檢查', '');
   if (r.similarity.length) { L.push(`| 題／組 | 配對數 | 平均相似度 | 最高 |`, `|---|---|---|---|`); for (const s of r.similarity) L.push(`| ${s.case}/${s.arm} | ${s.pairs} | ${s.mean} | ${s.max} |`); L.push(''); }
   L.push(...(r.flags.length ? r.flags.map((f) => `- ${f}`) : ['- 無旗標']));
@@ -684,25 +818,324 @@ function compareReports(oldR, newR) {
   }
   const to = oldR.totals?.[arm], tn = newR.totals?.[arm];
   const overall = regressed ? 'regressed' : improved ? 'improved' : 'held';
-  return { arm, overall, regressed, improved, held, rows, totals: { old: to ? `${to.pass}/${to.total}` : null, new: tn ? `${tn.pass}/${tn.total}` : null },
-    sameConditions: JSON.stringify(oldR.conditions?.executorModel) === JSON.stringify(newR.conditions?.executorModel) && oldR.lock?.lockedAt === newR.lock?.lockedAt,
+  const sameConditions = JSON.stringify(oldR.conditions?.executorModel) === JSON.stringify(newR.conditions?.executorModel) && (oldR.conditions?.executorEffort ?? null) === (newR.conditions?.executorEffort ?? null) && oldR.lock?.lockedAt === newR.lock?.lockedAt;
+  return { arm, overall, regressed, improved, held, rows, totals: { old: to ? `${to.pass}/${to.total}` : null, new: tn ? `${tn.pass}/${tn.total}` : null }, sameConditions,
     note: '逐條看：任何一條 regressed 都要單獨處理，不能被總分平均掉；規模只有個位數時，一格之差可能是浮動，先看同格相似度與翻幾格反轉。' };
+}
+function printCompare(c) {
+  console.log(`回歸比較（${c.arm} 組）：總判定 ${c.overall}（regressed ${c.regressed}／improved ${c.improved}／held ${c.held}）；總分 ${c.totals.old} → ${c.totals.new}；${c.sameConditions ? '同一份鎖定、同模型、同 effort' : '⚠ 鎖定、執行模型或 effort 不同，只能參考'}`);
+  for (const r of c.rows) console.log(`  ${r.id}: ${r.note || `${r.old} → ${r.new}  ${r.verdict}`}`);
+  console.log(c.note);
+}
+
+// ---------- 歷史檔：同一份題組的歷次量測（gauge 目錄下 history.jsonl，append-only） ----------
+const historyPath = (cfg) => path.join(cfg.__dir, 'history.jsonl');
+function appendHistory(cfg, outDir, report) {
+  const e = { at: report.generatedAt, engine: ENGINE_VERSION, kind: report.matrixCell ? 'matrix-cell' : report.baseline && !report.totals[report.arms[0]] ? 'baseline' : 'report', outDir: path.resolve(outDir), executorModel: cfg.executorModel || null, effort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, lockedAt: report.lock?.lockedAt || null, totals: report.totals, baselineVerdict: report.baseline?.verdict || null, flags: report.flags.length, matrixCell: report.matrixCell || null };
+  fs.appendFileSync(historyPath(cfg), JSON.stringify(e) + '\n');
+  return e;
+}
+function readHistory(cfg) {
+  const p = historyPath(cfg); if (!fs.existsSync(p)) return [];
+  return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+// 最近兩次同條件（同執行模型、同 effort、同鎖定）的量測，給 compare --config 用
+function lastTwoComparable(entries) {
+  const withReport = entries.filter((e) => e.kind !== 'baseline' && fs.existsSync(path.join(e.outDir, 'report.json')));
+  for (let i = withReport.length - 1; i > 0; i--) {
+    const n = withReport[i];
+    for (let j = i - 1; j >= 0; j--) { const o = withReport[j]; if (o.executorModel === n.executorModel && (o.effort ?? null) === (n.effort ?? null) && o.lockedAt === n.lockedAt) return [o, n]; }
+  }
+  return null;
+}
+
+// ---------- 報告輸出：report.json + report.md + report.html（render.mjs）＋ history ----------
+async function loadRender() { try { return await import('./render.mjs'); } catch (e) { log('⚠ 找不到或載入不了 render.mjs，略過 HTML：' + (e?.message || e)); return null; } }
+async function writeHtml(outDir, data, kind) {
+  const R = await loadRender(); if (!R) return null;
+  const fn = kind === 'report' ? R.renderReportHtml : kind === 'matrix' ? R.renderMatrixHtml : R.renderDescribeHtml;
+  if (typeof fn !== 'function') return null;
+  const p = path.join(outDir, `${kind}.html`);
+  try { fs.writeFileSync(p, fn(data, {})); return p; } catch (e) { log(`⚠ ${kind}.html 產生失敗：${e?.message || e}`); return null; }
+}
+async function writeReport(cfg, outDir, { history = true } = {}) {
+  const r = buildReport(cfg, outDir);
+  writeJSON(path.join(outDir, 'report.json'), r);
+  fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
+  await writeHtml(outDir, r, 'report');
+  if (history) appendHistory(cfg, outDir, r);
+  return r;
+}
+
+// ---------- 一次完整量測（all）：已知答案檢查 → [觸發] → 基準組先跑＋盲評＋停案規則 → 帶 skill 組 → 盲評 → 報告 ----------
+async function runPipeline(cfg, { outDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger = false, interleave = false, ignoreStopRule = false, isolation = null }) {
+  fs.mkdirSync(outDir, { recursive: true });
+  if (!fs.existsSync(path.join(outDir, 'gauge.json'))) fs.copyFileSync(cfg.__file, path.join(outDir, 'gauge.json'));
+  let iso = isolation;
+  if (!iso) { iso = await checkIsolation({ root, skillDir: cfg.skill.__abs, skillName: cfg.skill.name, executorModel: cfg.executorModel }); iso.claudeVersion = claudeVersion; }
+  writeJSON(path.join(outDir, 'isolation.json'), iso);
+  if (!iso.ok) die(`已知答案檢查未通過：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}。停，不開跑。`);
+  log(`已知答案檢查：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}`);
+  if (withTrigger) await runTrigger(cfg, { root, outDir, runs: Number(cfg.trigger?.runs || 3) });
+  const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
+  if (!interleave) {
+    // 停案規則：先跑不帶 skill 那組跑滿次數、盲評；全過就停，不浪費帶 skill 那組的錢
+    await runAll(cfg, { root, outDir, runs, parallel, armNames: [base.name] });
+    await gradeAll(cfg, { root, outDir, judgeModel });
+    const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
+    log(`停案規則：${bv.verdict}——${bv.note}`);
+    if (bv.verdict === 'STOP' && !ignoreStopRule) { const r = await writeReport(cfg, outDir); return { status: 'stopped', report: r }; }
+    await runAll(cfg, { root, outDir, runs, parallel, armNames: cfg.arms.filter((a) => a.name !== base.name).map((a) => a.name) });
+  } else {
+    await runAll(cfg, { root, outDir, runs, parallel });
+  }
+  await gradeAll(cfg, { root, outDir, judgeModel });
+  const r = await writeReport(cfg, outDir);
+  return { status: 'done', report: r };
+}
+
+// ---------- 多模型 × effort 矩陣：每格各跑一次完整量測（同題、同評分模型），再併成一張表 ----------
+const slugify = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'x';
+function matrixCombos(cfg, args) {
+  let combos = Array.isArray(cfg.matrix) ? cfg.matrix.map((m) => ({ executorModel: m.executorModel || m.model || cfg.executorModel || null, effort: m.effort || null })) : [];
+  if (args.models || args.efforts) {
+    const models = args.models ? String(args.models).split(',').map((x) => x.trim()).filter(Boolean) : [cfg.executorModel || null];
+    const efforts = args.efforts ? String(args.efforts).split(',').map((x) => x.trim()).filter(Boolean) : [null];
+    combos = []; for (const m of models) for (const e of efforts) combos.push({ executorModel: m, effort: e });
+  }
+  if (!combos.length) die('矩陣需要 gauge.json 的 matrix[]（{executorModel, effort}）或 --models a,b／--efforts low,high');
+  const seen = new Set();
+  for (const c of combos) {
+    if (c.effort && !EFFORT_LEVELS.includes(c.effort)) die(`effort 必須是 ${EFFORT_LEVELS.join('/')}：${c.effort}`);
+    c.slug = slugify(`${c.executorModel || 'default'}@${c.effort || 'default'}`);
+    if (seen.has(c.slug)) die(`矩陣有重複的格：${c.slug}`); seen.add(c.slug);
+  }
+  return combos;
+}
+function buildMatrix(cfg, outDir, combos) {
+  const m = { kind: 'matrix', engine: ENGINE_VERSION, name: cfg.name, generatedAt: new Date().toISOString(), judgeModel: cfg.judgeModel || null, runsPlanned: cfg.runs, arms: cfg.arms.map((a) => a.name), assertionIds: cfg.assertions.filter((a) => a.family === 'fact' || a.family === 'judgment').map((a) => a.id), combos: [], notes: [] };
+  for (const c of combos) {
+    const rp = path.join(outDir, c.slug, 'report.json');
+    const cell = { slug: c.slug, executorModel: c.executorModel, effort: c.effort, outDir: c.slug, status: c.status || (fs.existsSync(rp) ? 'done' : 'failed'), error: c.error || undefined };
+    if (fs.existsSync(rp)) {
+      const r = readJSON(rp);
+      Object.assign(cell, {
+        totals: r.totals, sensitivity: r.sensitivity || null, baselineVerdict: r.baseline?.verdict || null, flags: r.flags || [],
+        cost: Object.fromEntries(Object.entries(r.cost || {}).map(([a, x]) => [a, { medianDurationS: x.medianDurationS, medianOutputTokens: x.medianOutputTokens, medianCostUsd: x.medianCostUsd }])),
+        trigger: r.trigger ? { recall: r.trigger.recall, falseTriggerRate: r.trigger.falseTriggerRate } : undefined, pressureSummary: r.pressure?.summary,
+        assertions: Object.fromEntries(Object.entries(r.assertions || {}).map(([id, x]) => [id, x.arms])), actualModels: Object.fromEntries(Object.entries(r.cost || {}).map(([a, x]) => [a, x.models || []])),
+      });
+      if (r.baseline?.verdict === 'STOP' && cell.status === 'done') cell.status = 'stopped';
+    }
+    m.combos.push(cell);
+  }
+  m.notes.push('每一格＝同一份鎖定的題目、同一個評分模型，換執行模型／effort 各跑一次完整量測（含停案規則）。格與格之間不互相當基準；每格各自看差幾格、翻幾格反轉。', '同一格內的兩組才是對照。「A 模型停案、B 模型繼續」是矩陣最有用的讀法：這個 skill 對誰是稅、對誰有幫助。');
+  return m;
+}
+function matrixMarkdown(m) {
+  const L = [`# skill-gauge 矩陣 — ${m.name}`, '', `產生時間：${m.generatedAt}；評分模型：${m.judgeModel || '?'}；每格每組 ${m.runsPlanned} 次`, '', ...m.notes.map((n) => `> ${n}`), ''];
+  L.push(`| 格（模型@effort） | 狀態 | ${m.arms.map((a) => `${a} 通過／總格`).join(' | ')} | 差距 | 翻幾格反轉 | 停案 | 觸發（該／誤） | 壓力守住 | ${m.arms[0]} 每次 秒／輸出 token |`, `|---|---|${m.arms.map(() => '---').join('|')}|---|---|---|---|---|---|`);
+  for (const c of m.combos) L.push(`| ${c.slug} | ${c.status} | ${m.arms.map((a) => (c.totals?.[a] ? `${c.totals[a].pass}/${c.totals[a].total}` : '—')).join(' | ')} | ${c.sensitivity?.delta ?? '—'} | ${c.sensitivity?.flipsToReverse ?? '—'} | ${c.baselineVerdict || '—'} | ${c.trigger ? `${(c.trigger.recall ?? 0).toFixed(2)}／${(c.trigger.falseTriggerRate ?? 0).toFixed(2)}` : '—'} | ${c.pressureSummary ? m.arms.map((a) => `${a} ${c.pressureSummary[a]?.held ?? 0}/${c.pressureSummary[a]?.total ?? 0}`).join('、') : '—'} | ${c.cost?.[m.arms[0]] ? `${c.cost[m.arms[0]].medianDurationS?.toFixed?.(0) ?? '?'}／${c.cost[m.arms[0]].medianOutputTokens ?? '?'}` : '—'} |`);
+  L.push('', `## 逐條檢查項 × 格（每格顯示 ${m.arms.join(' · ')}）`, '', `| 檢查項 | ${m.combos.map((c) => c.slug).join(' | ')} |`, `|---|${m.combos.map(() => '---').join('|')}|`);
+  for (const id of m.assertionIds) L.push(`| ${id} | ${m.combos.map((c) => { const x = c.assertions?.[id]; return x ? m.arms.map((a) => (x[a] ? `${x[a].pass}/${x[a].total}` : '—')).join(' · ') : '—'; }).join(' | ')} |`);
+  L.push('', '## 旗標', '');
+  let any = false; for (const c of m.combos) for (const f of c.flags || []) { any = true; L.push(`- ${c.slug}：${f}`); }
+  if (!any) L.push('- 無旗標');
+  L.push('', '各格完整報告：`<格>/report.md`、`<格>/report.html`。');
+  return L.join('\n') + '\n';
+}
+async function runMatrix(cfg, args, { outDir, root, runs, parallel, judgeModel, claudeVersion }) {
+  const combos = matrixCombos(cfg, args);
+  const cells = cfg.cases.length * cfg.arms.length * runs;
+  log(`矩陣：${combos.length} 格（${combos.map((c) => c.slug).join('、')}）× 每格最多 ${cells} 次執行＋同數評分；停案規則會替全過的格省下帶 skill 那半`);
+  fs.mkdirSync(outDir, { recursive: true });
+  const iso = await checkIsolation({ root, skillDir: cfg.skill.__abs, skillName: cfg.skill.name, executorModel: combos[0].executorModel || cfg.executorModel });
+  iso.claudeVersion = claudeVersion; writeJSON(path.join(outDir, 'isolation.json'), iso);
+  if (!iso.ok) die(`已知答案檢查未通過：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}。停，不開跑。`);
+  // 評分者自證只做一次（評分模型全矩陣相同），複製到每一格
+  const scPath = path.join(outDir, 'grader-selfcheck.json');
+  if (!fs.existsSync(scPath)) { const sc = await graderSelfCheck({ root, judgeModel }); writeJSON(scPath, sc); log(sc.note); if (!sc.ok) die(sc.note); }
+  for (const c of combos) {
+    const cellDir = path.join(outDir, c.slug); fs.mkdirSync(cellDir, { recursive: true });
+    if (!fs.existsSync(path.join(cellDir, 'grader-selfcheck.json'))) fs.copyFileSync(scPath, path.join(cellDir, 'grader-selfcheck.json'));
+    const cfg2 = { ...cfg, executorModel: c.executorModel || cfg.executorModel, executorEffort: c.effort || null, __matrixCell: { slug: c.slug, executorModel: c.executorModel || cfg.executorModel || null, effort: c.effort || null } };
+    log(`── 格 ${c.slug} ──`);
+    try {
+      const res = await runPipeline(cfg2, { outDir: cellDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger: !!args['with-trigger'], interleave: !!args.interleave, ignoreStopRule: !!args['ignore-stop-rule'], isolation: iso });
+      c.status = res.status;
+    } catch (e) { c.status = 'failed'; c.error = String(e?.message || e); log(`格 ${c.slug} 失敗：${c.error}`); }
+  }
+  const m = buildMatrix(cfg, outDir, combos);
+  writeJSON(path.join(outDir, 'matrix.json'), m);
+  fs.writeFileSync(path.join(outDir, 'matrix.md'), matrixMarkdown(m));
+  await writeHtml(outDir, m, 'matrix');
+  return m;
+}
+
+// ---------- 描述優化迴圈：只動 description；train 改、held-out 選；預設不寫回（--apply 才寫，寫前備份） ----------
+function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function splitTrainTest(should, shouldNot, holdout = 0.4, seed = 42) {
+  const rnd = mulberry32(seed);
+  const shuffle = (xs) => { const a = xs.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const S = shuffle(should), N = shuffle(shouldNot);
+  const nS = holdout > 0 && S.length ? Math.max(1, Math.floor(S.length * holdout)) : 0, nN = holdout > 0 && N.length ? Math.max(1, Math.floor(N.length * holdout)) : 0;
+  return { train: { should: S.slice(nS), shouldNot: N.slice(nN) }, test: { should: S.slice(0, nS), shouldNot: N.slice(0, nN) }, seed, holdout };
+}
+function parseFrontmatter(md) { const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/); return m ? { raw: m[1], body: md.slice(m[0].length) } : null; }
+function getDescription(md) {
+  const fm = parseFrontmatter(md); if (!fm) return null;
+  const lines = fm.raw.split(/\r?\n/); const i = lines.findIndex((l) => /^description\s*:/.test(l)); if (i < 0) return null;
+  let v = lines[i].replace(/^description\s*:\s*/, ''); const cont = [];
+  for (let j = i + 1; j < lines.length && /^\s+\S/.test(lines[j]); j++) cont.push(lines[j].trim());
+  if (/^[>|]/.test(v)) v = cont.join(' '); else if (cont.length) v = [v, ...cont].join(' ');
+  v = v.trim();
+  if (v.startsWith('"') && v.endsWith('"')) { try { v = JSON.parse(v); } catch { v = v.slice(1, -1); } } else if (v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1).replace(/''/g, "'");
+  return v;
+}
+function setDescription(md, desc) {
+  const fm = parseFrontmatter(md); if (!fm) throw new Error('SKILL.md 沒有 frontmatter');
+  const lines = fm.raw.split(/\r?\n/); const i = lines.findIndex((l) => /^description\s*:/.test(l));
+  const newLine = 'description: ' + JSON.stringify(desc);
+  if (i < 0) lines.push(newLine); else { let end = i + 1; while (end < lines.length && /^\s+\S/.test(lines[end])) end++; lines.splice(i, end - i, newLine); }
+  return `---\n${lines.join('\n')}\n---\n` + fm.body;
+}
+async function proposeDescription({ root, model, skillName, skillBody, current, history, trainResult }) {
+  const failedShould = trainResult.perQuery.filter((q) => q.shouldTrigger && !q.pass).map((q) => q.query);
+  const falseFired = trainResult.perQuery.filter((q) => !q.shouldTrigger && !q.pass).map((q) => q.query);
+  const prompt = `你在替一個 Claude Code skill「${skillName}」改寫 frontmatter 的 description。這段文字是模型決定要不要用這個 skill 的唯一依據（模型只看名稱＋描述；決定用了才會讀 SKILL.md 全文）。
+目標：該觸發的指令要觸發，鄰近但不該觸發的不要觸發。只改 description，不改 skill 內容。
+
+=== 目前的 description ===
+${current}
+
+=== SKILL.md 內容（節錄，幫你理解它做什麼） ===
+${skillBody.slice(0, 6000)}
+
+=== 這一輪的觸發測試（train） ===
+分數：${trainResult.queriesPassed}/${trainResult.queriesTotal}
+該觸發但沒觸發：
+${failedShould.map((q) => '- ' + q.replace(/\n/g, ' ')).join('\n') || '（無）'}
+不該觸發卻觸發了：
+${falseFired.map((q) => '- ' + q.replace(/\n/g, ' ')).join('\n') || '（無）'}
+
+=== 之前試過的 description（train 分數） ===
+${history.map((h) => `- 第 ${h.round} 輪 ${h.train.passed}/${h.train.total}：${h.description.slice(0, 300)}`).join('\n') || '（無）'}
+
+要求：
+- 寫清楚「做什麼」＋「什麼時候用」＋「什麼時候不要用」，用具體情境詞，不用抽象形容詞；長度 ≤ 1024 字元；跟原文同一種語言。
+- 不要把測試句子的關鍵字全部塞進去硬湊——那是過擬合，held-out 分數會掉。
+- 只輸出新的 description 全文：不要引號、不要前後說明、不要 markdown、不要「description:」前綴。`;
+  const sb = makeSandbox(root, 'describe-propose');
+  const r = await runClaude({ cwd: sb, prompt, model, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS });
+  fs.rmSync(sb, { recursive: true, force: true });
+  let d = (r.text || '').trim().replace(/^```[a-z]*\r?\n?/, '').replace(/```\s*$/, '').trim();
+  if (/^description\s*:/.test(d)) d = d.replace(/^description\s*:\s*/, '').trim();
+  if ((d.startsWith('"') && d.endsWith('"')) || (d.startsWith("'") && d.endsWith("'"))) d = d.slice(1, -1);
+  return { description: d, ok: r.ok && d.length > 0 };
+}
+async function describeLoop(cfg, { root, outDir, rounds, runs, holdout, proposerModel, apply }) {
+  if (cfg.__baselineOnly) die('describe 需要 skill.path');
+  const t = cfg.trigger || {}; const should = t.should || [], shouldNot = t.shouldNot || [];
+  if (should.length + shouldNot.length < 4) die('描述優化需要觸發題：gauge.json 的 trigger.should／shouldNot（建議該觸發、不該觸發各 8–10 題）');
+  if (should.length + shouldNot.length < 10) log(`⚠ 觸發題只有 ${should.length + shouldNot.length} 題，held-out 會非常小；官方與 skill-forge 都建議 16–20 題`);
+  const split = splitTrainTest(should, shouldNot, holdout);
+  const skillMd = fs.readFileSync(path.join(cfg.skill.__abs, 'SKILL.md'), 'utf8');
+  const current = getDescription(skillMd); if (current == null) die('受測 skill 的 SKILL.md 沒有 description');
+  const skillBody = parseFrontmatter(skillMd)?.body || skillMd;
+  fs.mkdirSync(outDir, { recursive: true });
+  const hasTest = split.test.should.length + split.test.shouldNot.length > 0;
+  const pack = (s) => (s ? { passed: s.queriesPassed, total: s.queriesTotal, perQuery: s.perQuery.map((q) => ({ query: q.query, shouldTrigger: q.shouldTrigger, fired: q.fired, n: q.n, pass: q.pass })) } : null);
+  const evalDesc = async (desc, round) => {
+    const tmp = makeSandbox(root, `describe-skill-r${round}`); copyDir(cfg.skill.__abs, tmp); fs.writeFileSync(path.join(tmp, 'SKILL.md'), setDescription(skillMd, desc));
+    const train = await runTrigger(cfg, { root, runs, skillDir: tmp, should: split.train.should, shouldNot: split.train.shouldNot, quiet: true });
+    const test = hasTest ? await runTrigger(cfg, { root, runs, skillDir: tmp, should: split.test.should, shouldNot: split.test.shouldNot, quiet: true }) : null;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return { train: pack(train), test: pack(test) };
+  };
+  const hist = []; let desc = current;
+  for (let round = 0; round <= rounds; round++) {
+    if (round > 0) {
+      const prev = hist[hist.length - 1];
+      const p = await proposeDescription({ root, model: proposerModel, skillName: cfg.skill.name, skillBody, current: prev.description, history: hist, trainResult: { perQuery: prev.train.perQuery, queriesPassed: prev.train.passed, queriesTotal: prev.train.total } });
+      if (!p.ok) { log(`describe 第 ${round} 輪：提案失敗，停止`); break; }
+      desc = p.description;
+    }
+    const ev = await evalDesc(desc, round);
+    const entry = { round, source: round === 0 ? 'current' : 'proposed', description: desc, ...ev };
+    hist.push(entry);
+    log(`describe 第 ${round} 輪：train ${entry.train.passed}/${entry.train.total}${entry.test ? `，test ${entry.test.passed}/${entry.test.total}` : ''}`);
+    writeJSON(path.join(outDir, `describe-round-${round}.json`), entry);
+    if (entry.train.passed === entry.train.total && round < rounds) { log('train 全過，提前停止'); break; }
+  }
+  const score = (h) => (h.test ? h.test.passed / Math.max(1, h.test.total) : h.train.passed / Math.max(1, h.train.total));
+  let best = hist[0]; for (const h of hist) if (score(h) > score(best)) best = h; // 同分取較早（不換）
+  const flat = (o) => [...o.should.map((q) => ({ query: q, shouldTrigger: true })), ...o.shouldNot.map((q) => ({ query: q, shouldTrigger: false }))];
+  const out = { kind: 'describe', engine: ENGINE_VERSION, name: cfg.name, skill: cfg.skill.name, proposerModel, triggerModel: cfg.executorModel || '(帳號預設)', runsPerQuery: runs, holdout, seed: split.seed, generatedAt: new Date().toISOString(),
+    split: { train: flat(split.train), test: flat(split.test) }, rounds: hist,
+    best: { round: best.round, description: best.description, testScore: best.test ? `${best.test.passed}/${best.test.total}` : null, trainScore: `${best.train.passed}/${best.train.total}` }, applied: false };
+  out.note = best.round === 0
+    ? '最佳仍是目前的 description（照 held-out 分數；同分不換）：沒有比原本更好的提案，不要硬換。'
+    : `第 ${best.round} 輪的 description 在 held-out 上最好。held-out 只有 ${out.split.test.length} 題、每題跑 ${runs} 次——一題翻就變，這是描述性排名不是定論。要套用：同一指令加 --apply（會備份 SKILL.md、只改 description；改完 lock 會不一致，要重新核可＋lock）。`;
+  if (apply && best.round > 0) {
+    const bak = path.join(cfg.skill.__abs, `SKILL.md.bak-${nowStamp()}`); fs.copyFileSync(path.join(cfg.skill.__abs, 'SKILL.md'), bak);
+    fs.writeFileSync(path.join(cfg.skill.__abs, 'SKILL.md'), setDescription(skillMd, best.description)); out.applied = true; out.note += ` 已寫回 ${path.join(cfg.skill.__abs, 'SKILL.md')}（備份 ${path.basename(bak)}）。`;
+  }
+  writeJSON(path.join(outDir, 'describe.json'), out);
+  fs.writeFileSync(path.join(outDir, 'describe.md'), describeMarkdown(out));
+  await writeHtml(outDir, out, 'describe');
+  return out;
+}
+function describeMarkdown(d) {
+  const L = [`# skill-gauge 描述優化 — ${d.skill}`, '', `觸發模型：${d.triggerModel}；提案模型：${d.proposerModel}；每題跑 ${d.runsPerQuery} 次；train ${d.split.train.length} 題／held-out ${d.split.test.length} 題（holdout ${d.holdout}，seed ${d.seed}）`, '', `> 一題「過」的意思：跑 ${d.runsPerQuery} 次，觸發次數過半＝有觸發；該觸發且有觸發、或不該觸發且沒觸發＝過。最佳描述用 held-out 分數選，不看 train，避免過擬合。`, '', `| 輪 | 來源 | train | held-out | description（前 120 字） |`, `|---|---|---|---|---|`];
+  for (const r of d.rounds) L.push(`| ${r.round} | ${r.source} | ${r.train.passed}/${r.train.total} | ${r.test ? `${r.test.passed}/${r.test.total}` : '—'} | ${r.description.slice(0, 120).replace(/\|/g, '｜').replace(/\n/g, ' ')}${r.description.length > 120 ? '…' : ''} |`);
+  L.push('', `## 最佳（第 ${d.best.round} 輪；held-out ${d.best.testScore ?? '—'}、train ${d.best.trainScore}）`, '', '```', d.best.description, '```', '', d.note, '', '## 逐題', '');
+  const rows = (kind, arr) => { L.push(`### ${kind}`, '', `| 題 | 該觸發？ | ${d.rounds.map((r) => `第 ${r.round} 輪`).join(' | ')} |`, `|---|---|${d.rounds.map(() => '---').join('|')}|`); for (const q of arr) L.push(`| ${q.query.slice(0, 60).replace(/\|/g, '｜').replace(/\n/g, ' ')} | ${q.shouldTrigger ? '是' : '否'} | ${d.rounds.map((r) => { const s = (kind === 'train' ? r.train : r.test)?.perQuery.find((x) => x.query === q.query); return s ? `${s.fired}/${s.n}${s.pass ? ' ✓' : ' ✗'}` : '—'; }).join(' | ')} |`); L.push(''); };
+  rows('train', d.split.train); if (d.split.test.length) rows('held-out', d.split.test);
+  return L.join('\n') + '\n';
 }
 
 // ---------- 主程式 ----------
+const COMMANDS = ['check-isolation', 'lock', 'baseline', 'trigger', 'run', 'grade', 'report', 'all', 'matrix', 'matrix-report', 'describe', 'html', 'history', 'compare'];
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0];
-  if (!['check-isolation', 'lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'compare'].includes(cmd)) die('用法：node scripts/gauge.mjs <check-isolation|lock|baseline|trigger|run|grade|report|all|compare> …（見檔頭）');
+  if (!COMMANDS.includes(cmd)) die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
+  const needCfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'matrix', 'matrix-report', 'describe', 'history'].includes(cmd) || (cmd === 'compare' && args.config);
+  const cfg = needCfg ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
+  if (cfg && args.effort) { if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`); cfg.executorEffort = args.effort; }
+
   if (cmd === 'compare') {
-    const [a, b] = args._.slice(1); if (!a || !b) die('用法：compare <舊 report.json> <新 report.json>');
-    const c = compareReports(readJSON(a), readJSON(b));
-    console.log(`回歸比較（${c.arm} 組）：總判定 ${c.overall}（regressed ${c.regressed}／improved ${c.improved}／held ${c.held}）；總分 ${c.totals.old} → ${c.totals.new}；${c.sameConditions ? '同一份鎖定與模型設定' : '⚠ 鎖定或執行模型設定不同，只能參考'}`);
-    for (const r of c.rows) console.log(`  ${r.id}: ${r.note || `${r.old} → ${r.new}  ${r.verdict}`}`);
-    console.log(c.note); return;
+    if (cfg) {
+      const pair = lastTwoComparable(readHistory(cfg)); if (!pair) die('history.jsonl 裡找不到兩次同條件（同執行模型、同 effort、同鎖定）的量測可比');
+      console.log(`比較 ${pair[0].outDir}\n  →  ${pair[1].outDir}`);
+      printCompare(compareReports(readJSON(path.join(pair[0].outDir, 'report.json')), readJSON(path.join(pair[1].outDir, 'report.json')))); return;
+    }
+    const [a, b] = args._.slice(1); if (!a || !b) die('用法：compare <舊 report.json> <新 report.json>，或 compare --config <gauge.json>（拿 history 最近兩次同條件）');
+    printCompare(compareReports(readJSON(a), readJSON(b))); return;
   }
-  const claudeVersion = await new Promise((res) => { const c = spawn('claude', ['--version'], { shell: IS_WIN }); let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => res(o.trim())); c.on('error', () => res(null)); });
-  if (!claudeVersion) die('找不到 claude 指令，請先安裝並登入 Claude Code');
+  if (cmd === 'history') {
+    const h = readHistory(cfg); if (!h.length) { console.log('（還沒有歷史：跑過 report／all／baseline／matrix 才會寫 history.jsonl）'); return; }
+    console.log(`| 時間 | 種類 | 執行模型 | effort | 各組通過／總格 | 停案 | 旗標數 | 目錄 |\n|---|---|---|---|---|---|---|---|`);
+    for (const e of h) console.log(`| ${e.at} | ${e.kind}${e.matrixCell ? `(${e.matrixCell.slug})` : ''} | ${e.executorModel || '(預設)'} | ${e.effort || '—'} | ${Object.entries(e.totals || {}).map(([a, t]) => `${a} ${t.pass}/${t.total}`).join('、') || '—'} | ${e.baselineVerdict || '—'} | ${e.flags} | ${e.outDir} |`);
+    return;
+  }
+  if (cmd === 'html') {
+    const outDir = path.resolve(args.out || '.');
+    let n = 0;
+    for (const [f, kind] of [['report.json', 'report'], ['matrix.json', 'matrix'], ['describe.json', 'describe']]) { const p = path.join(outDir, f); if (fs.existsSync(p)) { const h = await writeHtml(outDir, readJSON(p), kind); if (h) { console.log(`→ ${h}`); n++; } } }
+    if (!n) die(`${outDir} 裡沒有 report.json／matrix.json／describe.json`);
+    return;
+  }
+  if (cmd === 'matrix-report') {
+    const outDir = path.resolve(args.out || die('缺 --out <矩陣目錄>'));
+    const combos = fs.readdirSync(outDir, { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(outDir, e.name, 'gauge.json'))).map((e) => { const g = readJSON(path.join(outDir, e.name, 'report.json')); const mc = g?.matrixCell || {}; return { slug: e.name, executorModel: mc.executorModel || null, effort: mc.effort || null }; });
+    if (!combos.length) die('矩陣目錄裡沒有任何一格（子目錄含 gauge.json 與 report.json）');
+    const m = buildMatrix(cfg, outDir, combos); writeJSON(path.join(outDir, 'matrix.json'), m); fs.writeFileSync(path.join(outDir, 'matrix.md'), matrixMarkdown(m)); await writeHtml(outDir, m, 'matrix');
+    console.log(fs.readFileSync(path.join(outDir, 'matrix.md'), 'utf8')); return;
+  }
+
+  const claudeVersion = await new Promise((res) => { const c = spawn(CLAUDE_CMD[0], [...CLAUDE_CMD.slice(1), '--version'], { shell: IS_WIN }); let o = ''; c.stdout.on('data', (d) => (o += d)); c.on('close', () => res(o.trim() || null)); c.on('error', () => res(null)); });
+  if (!claudeVersion) die(`找不到 ${CLAUDE_CMD.join(' ')} 指令，請先安裝並登入 Claude Code`);
 
   if (cmd === 'check-isolation') {
     const root = resolveRoot(args.root);
@@ -714,7 +1147,6 @@ async function main() {
     if (!r.ok) die('已知答案檢查未通過——先停，別往下跑。最常見原因：隔離目錄的上層有 .claude/。');
     return;
   }
-  const cfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline'].includes(cmd) ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
   if (cmd === 'lock') {
     const lock = lockInputs(cfg); writeJSON(path.join(cfg.__dir, 'lock.json'), lock);
     console.log(`已鎖定 ${lock.entries.length} 個輸入 → ${path.join(cfg.__dir, 'lock.json')}`); return;
@@ -723,72 +1155,75 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   if (!fs.existsSync(path.join(outDir, 'gauge.json'))) fs.copyFileSync(cfg.__file, path.join(outDir, 'gauge.json'));
   const runs = Number(args.runs || cfg.runs);
+  const parallel = Number(args.parallel || 1);
+  const judgeModel = args['judge-model'] || cfg.judgeModel;
+
   if (cmd === 'baseline') {
     const root = resolveRoot(args.root || cfg.root);
     const iso = await checkIsolation({ root, skillDir: null, skillName: null, executorModel: cfg.executorModel });
     iso.claudeVersion = claudeVersion; writeJSON(path.join(outDir, 'isolation.json'), iso);
     if (!iso.ok) die('已知答案檢查未通過，停。');
     const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
-    const judgeModel = args['judge-model'] || cfg.judgeModel; if (!judgeModel) die('缺評分模型');
-    await runAll(cfg, { root, outDir, runs, parallel: Number(args.parallel || 1), armNames: [base.name] });
+    if (!judgeModel) die('缺評分模型');
+    await runAll(cfg, { root, outDir, runs, parallel, armNames: [base.name] });
     await gradeAll(cfg, { root, outDir, judgeModel });
     const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
-    const r = buildReport(cfg, outDir); writeJSON(path.join(outDir, 'report.json'), r); fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
+    await writeReport(cfg, outDir);
     console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
     console.log(`基準量測完成：${bv.verdict}——${bv.note}\n→ ${outDir}`);
     return;
   }
-  if (cmd === 'all' && cfg.__baselineOnly) die('gauge.json 沒有 skill.path：只能跑 baseline（量不帶 skill 的模型做不做得到）；要量 skill 效果請補 skill.path 再 lock。');
-  if (cmd === 'trigger') { const root = resolveRoot(args.root || cfg.root); const s = await runTrigger(cfg, { root, outDir, runs: Number(args.runs || cfg.trigger?.runs || 3) }); console.log(JSON.stringify(s && { should: s.should, shouldNot: s.shouldNot, recall: s.recall, falseTriggerRate: s.falseTriggerRate }, null, 2)); return; }
-  if (cmd === 'run' || cmd === 'all') {
+  if (['all', 'matrix', 'describe'].includes(cmd) && cfg.__baselineOnly) die('gauge.json 沒有 skill.path：只能跑 baseline（量不帶 skill 的模型做不做得到）；要量 skill 效果請補 skill.path 再 lock。');
+  if (cmd === 'trigger') { const root = resolveRoot(args.root || cfg.root); const s = await runTrigger(cfg, { root, outDir, runs: Number(args.runs || cfg.trigger?.runs || 3) }); console.log(JSON.stringify(s && { should: s.should, shouldNot: s.shouldNot, recall: s.recall, falseTriggerRate: s.falseTriggerRate, queriesPassed: s.queriesPassed, queriesTotal: s.queriesTotal }, null, 2)); return; }
+  if (cmd === 'describe') {
+    const root = resolveRoot(args.root || cfg.root);
+    const d = await describeLoop(cfg, { root, outDir, rounds: Number(args.rounds || 3), runs: Number(args.runs || cfg.trigger?.runs || 3), holdout: Number(args.holdout ?? 0.4), proposerModel: args['proposer-model'] || cfg.describeModel || judgeModel || cfg.executorModel, apply: !!args.apply });
+    console.log(fs.readFileSync(path.join(outDir, 'describe.md'), 'utf8'));
+    console.log(`→ ${outDir}${d.applied ? '（已寫回 description）' : ''}`);
+    return;
+  }
+  if (cmd === 'run' || cmd === 'all' || cmd === 'matrix') {
     const lk = verifyLock(cfg, path.join(cfg.__dir, 'lock.json'));
     if (!lk.ok && !args.force) die(`輸入與 lock.json 不一致：${lk.reason || lk.diffs.join('；')}。預先登錄改了就要重新核可＋重新 lock；硬要跑加 --force（報告會標記）。`);
     const root = resolveRoot(args.root || cfg.root);
+    if (cmd === 'matrix') {
+      if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
+      await runMatrix(cfg, args, { outDir, root, runs, parallel, judgeModel, claudeVersion });
+      console.log(fs.readFileSync(path.join(outDir, 'matrix.md'), 'utf8'));
+      console.log(`→ ${path.join(outDir, 'matrix.md')}（各格：<格>/report.md／report.html；HTML 總表：matrix.html）`);
+      return;
+    }
+    if (cmd === 'all') {
+      if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
+      const res = await runPipeline(cfg, { outDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger: !!args['with-trigger'], interleave: !!args.interleave, ignoreStopRule: !!args['ignore-stop-rule'] });
+      console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
+      if (res.status === 'stopped') { console.log(`\n已依停案規則停止（未跑帶 skill 那組）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`); process.exit(3); }
+      console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
+      return;
+    }
+    // run：只執行（可指定 --arms）
     const iso = await checkIsolation({ root, skillDir: cfg.skill.__abs, skillName: cfg.skill.name, executorModel: cfg.executorModel });
     iso.claudeVersion = claudeVersion; writeJSON(path.join(outDir, 'isolation.json'), iso);
     if (!iso.ok) die(`已知答案檢查未通過：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}。停，不開跑。`);
-    if (cmd === 'run' && cfg.__baselineOnly) args.arms = args.arms || (cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1]).name;
+    if (cfg.__baselineOnly) args.arms = args.arms || (cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1]).name;
     log(`已知答案檢查：${iso.items.map((i) => `${i.canary}=${i.verdict}`).join('，')}`);
-    if (cmd === 'all' && args['with-trigger']) await runTrigger(cfg, { root, outDir, runs: Number(cfg.trigger?.runs || 3) });
-    const parallel = Number(args.parallel || 1);
-    if (cmd === 'all' && !args.interleave) {
-      // 停案規則：先跑不帶 skill 那組跑滿次數、盲評；全過就停，不浪費帶 skill 那組的錢
-      const base = cfg.arms.find((a) => !a.skill && !a.skillPath) || cfg.arms[1];
-      const judgeModel = args['judge-model'] || cfg.judgeModel;
-      if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
-      await runAll(cfg, { root, outDir, runs, parallel, armNames: [base.name] });
-      await gradeAll(cfg, { root, outDir, judgeModel });
-      const bv = baselineVerdict(cfg, outDir); writeJSON(path.join(outDir, 'baseline.json'), bv);
-      log(`停案規則：${bv.verdict}——${bv.note}`);
-      if (bv.verdict === 'STOP' && !args['ignore-stop-rule']) {
-        const r = buildReport(cfg, outDir); writeJSON(path.join(outDir, 'report.json'), r); fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
-        console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
-        console.log(`\n已依停案規則停止（未跑帶 skill 那組）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`);
-        process.exit(3);
-      }
-      await runAll(cfg, { root, outDir, runs, parallel, armNames: cfg.arms.filter((a) => a.name !== base.name).map((a) => a.name) });
-    } else {
-      await runAll(cfg, { root, outDir, runs, parallel, armNames: args.arms ? String(args.arms).split(',') : null });
-    }
-    if (cmd === 'run') { console.log(`執行完成 → ${outDir}`); return; }
+    await runAll(cfg, { root, outDir, runs, parallel, armNames: args.arms ? String(args.arms).split(',') : null });
+    console.log(`執行完成 → ${outDir}`); return;
   }
-  if (cmd === 'grade' || cmd === 'all') {
+  if (cmd === 'grade') {
     const root = resolveRoot(args.root || cfg.root);
-    const judgeModel = args['judge-model'] || cfg.judgeModel;
     if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
     await gradeAll(cfg, { root, outDir, judgeModel });
-    if (cmd === 'grade') { console.log(`評分完成 → ${outDir}`); return; }
+    console.log(`評分完成 → ${outDir}`); return;
   }
-  if (cmd === 'report' || cmd === 'all') {
-    const r = buildReport(cfg, outDir);
-    writeJSON(path.join(outDir, 'report.json'), r);
-    fs.writeFileSync(path.join(outDir, 'report.md'), reportMarkdown(cfg, r));
+  if (cmd === 'report') {
+    await writeReport(cfg, outDir);
     console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
-    console.log(`→ ${path.join(outDir, 'report.md')}`);
+    console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
     return;
   }
-  die(`用法：node scripts/gauge.mjs <check-isolation|lock|trigger|run|grade|report|all> …（見檔頭）`);
+  die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs };
+export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));

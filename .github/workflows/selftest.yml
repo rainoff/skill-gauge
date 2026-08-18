@@ -7,4 +7,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
+      # 第一層：純函式與報告數學（幾秒）
       - run: node .claude/skills/skill-gauge/scripts/selftest.mjs
+      # 第四層：假模型端到端（不打 API）：lock → all（觸發＋壓力）→ matrix → describe → compare → html → baseline
+      - run: node .claude/skills/skill-gauge/scripts/e2e-stub.mjs

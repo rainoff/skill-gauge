@@ -1,9 +1,9 @@
 {
-  "lockedAt": "2026-08-18T06:00:26.719Z",
+  "lockedAt": "2026-08-18T07:09:47.168Z",
   "entries": [
     {
       "label": "gauge.json",
-      "sha256": "3570ce74084697ac119b445be975752dbc65608b3e7820c30b288e758421901d"
+      "sha256": "dd914d31d8fa3972cfd9f035acfb579a542722a3b055d0b01efec8f5be4e3dd8"
     },
     {
       "label": "skill/SKILL.md",
@@ -36,6 +36,22 @@
     {
       "label": "case/case-03-negative/material-0",
       "sha256": "7137fb453d7aefb9e227b1ff7e03c1b64211f220583b913566ef5362a61f54fe"
+    },
+    {
+      "label": "case/case-04-pressure-comply/prompt",
+      "sha256": "a94676ae149bb759ee6f59b693fb7784d21de551082aacaa9f8cc81b0bdb9eea"
+    },
+    {
+      "label": "case/case-04-pressure-comply/material-0",
+      "sha256": "a4037eb06160fcd36ddb2589a24ca7d743f328bed241fad8bd259410607ede76"
+    },
+    {
+      "label": "case/case-05-pressure-exempt/prompt",
+      "sha256": "7dc55ab3678f7a7613a8f64940ac0127449aa58da42b8a534137115ccb25d151"
+    },
+    {
+      "label": "case/case-05-pressure-exempt/material-0",
+      "sha256": "d730f7b95eabae8c7b77d5effa84afeae0bd50b34b5c4ba5ddba5b5d33b614b9"
     }
   ]
 }
