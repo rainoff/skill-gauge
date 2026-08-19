@@ -32,7 +32,7 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 
 ## v2 確證版（confirmatory）——能支持「在宣告條件內，放進 skill 造成 Δ」的因果宣稱
 
-08-18 傍晚 codex sol 第三、四輪（`docs/reviews/2026-08-18/out-C-causal.md`、`out-D-landscape.md`）的結論：檯面上官方 skill-creator＝探索性、`claude plugin eval` 與 skill-forge eval-skill＝工程級、skill-gauge＝工程級；**沒有任何一個達到確證級**。要到確證級，缺的不是功能，是把量測效度、宣稱邊界與不確定性變成機械契約。優先順序（codex 建議、維護者待裁）：
+08-18 傍晚 codex sol 第三、四輪（內部審查紀錄，未公開）的結論：檯面上官方 skill-creator＝探索性、`claude plugin eval` 與 skill-forge eval-skill＝工程級、skill-gauge＝工程級；**沒有任何一個達到確證級**。要到確證級，缺的不是功能，是把量測效度、宣稱邊界與不確定性變成機械契約。優先順序（codex 建議、維護者待裁）：
 1. **介入後排除**：現在前置檢查沒過的 run 作廢不計分——skill 若造成拒答或不可評，等於偏向 skill。確證階段改 ITT：拒答／作廢算不通過，一併進主要指標。
 2. **真正的配對隨機**：AB／BA 區塊隨機順序＋同時段交錯（`schedule.json`），pilot（停案用）與 formal 分流、pilot 資料不進差值。
 3. **單一二元主要指標＋配對區間＋功效**：例如逐題「全部計分檢查通過」；配對差用 Newcombe／McNemar 類區間；開跑前算樣本數（McNemar：m≈[1.96√q＋0.84√(q−Δ²)]²／Δ²；偵測 15 個百分點差、不一致率 q＝0.30 時約 103 個配對區塊——20 題×6 次量級，遠大於教具的 5 題×2 次）；其餘檢查項一律探索性。
@@ -81,7 +81,7 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 取向觀察要不要升格進計分，每一題都要單獨裁決，不能一次套用到全部。
 - 評測鷹架詞，例如「事實包」這類內部用語，不能出現在題目 prompt 裡。這樣才能避免外洩到成品裡。
 
-## 2026-08-19 codex 全包複核留下的待辦（引擎面；分享會前只改文件，紀錄在 docs/reviews/2026-08-19/）
+## 2026-08-19 codex 全包複核留下的待辦（引擎面；分享會前只改文件；審查原稿為內部紀錄，未公開）
 
 - lock 只鎖檔案：`--runs`／`--judge-model`／`--effort`／matrix 的 `--models --efforts` 可在核可後覆寫且核可頁看不到；`baseline`／`trigger`／`describe` 不驗 lock、不做已知答案檢查；`--runs 0` 或非數字沒擋
 - 停案 INCOMPLETE 規則與 SKILL 第 4 步不一致（只在「有效格全過但不完整」才判 INCOMPLETE）；INCOMPLETE 也不停 pipeline
@@ -94,5 +94,5 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 模板要求「先 commit」與 SKILL 用 lock 矛盾；gate 放格式的說法前後矛盾；results 模板 §1–§6 全填 vs SKILL 第 5 步只填部分
 - 已知答案檢查是固定題（全域規則對回應語言的要求＋skill 名），不是使用者自選；INCONCLUSIVE 仍 iso.ok=true 繼續
 - Windows 引擎實跑：待 testing.md 有紀錄才可寫「通用」；CI 只有 Ubuntu
-- 轉 public 前：docs/reviews/ 內本機絕對路徑要脫敏（08-19 16:26 已做，改寫成 <repo>/、~/）；gauge/ 整個已移出版控
+- 公開版不含審查原稿（docs/reviews 已移至內部資料夾）與本機量測資料夾（gauge/）
 

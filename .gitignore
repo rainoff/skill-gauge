@@ -20,3 +20,6 @@ exercises/fixtures/*/gauge/preview.html
 
 # 本機量測資料夾整個不進 repo（08-19 誤以 add -A 加入，已移除；含本機路徑）
 gauge/
+
+# 審查原稿為內部紀錄，不進公開 repo
+docs/reviews/

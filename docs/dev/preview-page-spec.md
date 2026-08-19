@@ -23,7 +23,7 @@ Maintainer feedback while dogfooding the v1.1 flow (2026-08-18): after the six q
 | `docs/roadmap.md` | one bullet under the v1.2 list marking 核可頁 as done (dated 2026-08-18) |
 | `.gitignore` | ignore `gauge/*/preview.html` and `exercises/fixtures/*/gauge/preview.html` |
 
-Do not touch: `templates/`, `examples/`, `exercises/01-*.md`, `docs/reviews/`, anything under `.claude-plugin/`.
+Do not touch: `templates/`, `examples/`, `exercises/01-*.md`, anything under `.claude-plugin/`.
 
 ## 1. `preview` subcommand (gauge.mjs)
 
