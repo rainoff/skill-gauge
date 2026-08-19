@@ -139,7 +139,7 @@ function runClaude({ cwd, prompt, model, effort = null, isolate = true, allowedT
     if (isolate) args.push(...ISOLATION_FLAGS);
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
-    if (noTools) args.push('--tools', ''); // 評分者、提案者、已知答案題：完全不給工具（受測產出是不可信資料，不讓它誘導工具呼叫）
+    if (noTools) args.push('--tools', IS_WIN ? '""' : ''); // 評分者、提案者、已知答案題：完全不給工具（受測產出是不可信資料，不讓它誘導工具呼叫）。Windows 走 shell:true，node 不替空字串加引號、'' 會整個消失→ CLI 回「--tools argument missing」而盲評靜默失敗（2026-08-19 Windows 首次實跑抓到；傳字面 "" 才會變成空清單，正負對照：init 事件 tools=[] vs 不帶 --tools 29 個）
     if (permissionMode) args.push('--permission-mode', permissionMode);
     if (allowedTools.length) args.push('--allowedTools', ...allowedTools);
     args.push(...extraArgs);
