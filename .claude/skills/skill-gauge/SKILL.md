@@ -6,7 +6,7 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 # skill-gauge — 幫使用者量一個 skill（v1.1）
 
 你做的是量測設計與執行的苦工；判斷留給人。文末四個停止點不可省——省了，量出來的東西比不測還糟。
-引擎在本 skill 資料夾的 `scripts/gauge.mjs`（Node ≥ 18，零依賴，mac／Linux／Windows 通用）。以下用 `<SKILL_DIR>` 代表本 skill 資料夾（Claude Code 會把 `${CLAUDE_SKILL_DIR}` 換成這個路徑；用 plugin 安裝的也一樣——看不到替換就用你讀到這份 SKILL.md 的資料夾）。
+引擎在本 skill 資料夾的 `scripts/gauge.mjs`（Node ≥ 18，零依賴；mac／Linux 實跑過，Windows 有對應處理但實跑紀錄以 docs/testing.md 為準）。以下用 `<SKILL_DIR>` 代表本 skill 資料夾（Claude Code 會把 `${CLAUDE_SKILL_DIR}` 換成這個路徑；用 plugin 安裝的也一樣——看不到替換就用你讀到這份 SKILL.md 的資料夾）。
 
 ## 第 0 步：確認前提（半分鐘）
 
@@ -89,7 +89,7 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 
 ## 第 5 步：寫結果
 
-先讀 `report.md` 開頭的**「摘要結論（給人看的一頁）」**——四問：有沒有幫上忙、優點在哪／缺點在哪、這次的限制、該怎麼改；**轉述給使用者只用這一頁**（不念 id、不念比率）。「先看這裡」以下是工程細節；要逐份看產出與評分證據就開 `report.html`（「逐份看產出」那一段——先看產出再看數字，不要先信總分）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查作廢集中、壓力下折了／過度套用）；有壓力題就把 `pressure-capture.json` 的合理化說詞逐字附上。**結論措辭只能用 pre-registration 寫死的「能說」句式**；每一句能說都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
+先讀 `report.md` 開頭的**「摘要結論（給人看的一頁）」**——四問：有沒有幫上忙、優點在哪／缺點在哪、這次的限制、該怎麼改；**轉述給使用者只用這一頁**（不念 id、不念比率）。「先看這裡」以下是工程細節；要逐份看產出與評分證據就開 `report.html`（「逐份看產出」那一段——先看產出再看數字，不要先信總分）。填 `results.md`：§1 條件表照 report 的「條件」段回填**實際**模型；§5 通過數、§6 成本照表；§7 灰區寫評分證據裡看到的模稜處；§10 天花板照 report 的旗標（零鑑別、帶 skill 反而較差、同格 run 高度相似、前置檢查作廢集中、壓力下折了／過度套用）；有壓力題就把 `pressure-capture.json` 的合理化說詞逐字附上。**結論措辭只能用 pre-registration 寫死的「可說明」句式**；每一句可說明都要帶差距與「翻幾格就反轉」。作廢與失敗的 run 沒補跑前，不寫總結句。
 
 ## 第 6 步：下一步——把量出來的東西接回建 skill 的迴圈
 

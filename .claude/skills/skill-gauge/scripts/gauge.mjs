@@ -1544,7 +1544,7 @@ async function main() {
       if (!judgeModel) die('缺評分模型：gauge.json 的 judgeModel 或 --judge-model');
       const res = await runPipeline(cfg, { outDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger: !!args['with-trigger'], interleave: !!args.interleave, ignoreStopRule: !!args['ignore-stop-rule'] });
       console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
-      if (res.status === 'stopped') { console.log(`\n已依停案規則停止（未跑帶 skill 那組）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`); process.exit(3); }
+      if (res.status === 'stopped') { console.log(`\n已依停案規則停止：不帶 skill 那組每條計分檢查每次都過，帶 skill 那組只跑了安全探針（壓力題／負向對照題），報告已產出（這是正常結束，exit 3 只是給腳本判斷用）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`); process.exit(3); }
       console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
       return;
     }

@@ -80,3 +80,19 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 出處註記或頁尾的後設資料算不算數，判斷標準要先寫死，不能臨場決定。
 - 取向觀察要不要升格進計分，每一題都要單獨裁決，不能一次套用到全部。
 - 評測鷹架詞，例如「事實包」這類內部用語，不能出現在題目 prompt 裡。這樣才能避免外洩到成品裡。
+
+## 2026-08-19 codex 全包複核留下的待辦（引擎面；分享會前只改文件，紀錄在 docs/reviews/2026-08-19/）
+
+- lock 只鎖檔案：`--runs`／`--judge-model`／`--effort`／matrix 的 `--models --efforts` 可在核可後覆寫且核可頁看不到；`baseline`／`trigger`／`describe` 不驗 lock、不做已知答案檢查；`--runs 0` 或非數字沒擋
+- 停案 INCOMPLETE 規則與 SKILL 第 4 步不一致（只在「有效格全過但不完整」才判 INCOMPLETE）；INCOMPLETE 也不停 pipeline
+- 從 runs/ 內 gauge.json 副本載入時相對路徑少一層（`grade --out`／`report --out`）；分段 `run` 不寫 effective.json；`grade`／`report` 不驗 lock；同 judge 的舊 grading.json 直接沿用
+- 資料不完整仍出粗分與翻格句；摘要沒把 pre-registration 的可說明／無法說明原文帶進來
+- 產出 >2 MiB 略過不記、評分輸入 60,000 字截斷未上浮到報告、HTML 只列前六個 artifact
+- sandbox 路徑含 arm 名（with／without／reminder）——受測模型 `pwd` 就知道自己是哪組；executor 預設不限工具
+- arms 順序沒契約（第一個當受測、第二個當對照）；第三組 skillPath 不先驗 SKILL.md 存在
+- 零計分格仍可判 STOP；lock／compare 不綁引擎版本
+- 模板要求「先 commit」與 SKILL 用 lock 矛盾；gate 放格式的說法前後矛盾；results 模板 §1–§6 全填 vs SKILL 第 5 步只填部分
+- 已知答案檢查是固定題（全域規則對回應語言的要求＋skill 名），不是使用者自選；INCONCLUSIVE 仍 iso.ok=true 繼續
+- Windows 引擎實跑：待 testing.md 有紀錄才可寫「通用」；CI 只有 Ubuntu
+- 轉 public 前：docs/reviews/ 內 153 處 `~` 路徑要脫敏；.gitignore 只排 `gauge/*/runs/`
+
