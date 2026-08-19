@@ -17,7 +17,7 @@ Rules for the text:
 ### The four questions
 
 1. **有沒有幫上忙？** — from `totals`/`sensitivity` (primary arms): 「帶 skill 過 A 格、不帶過 B 格（共 T 格）——多 D 格；翻 F 格就反過來」 + verdict word: D ≤ 2 → 「差不多」; 2 < D and F ≤ 3 → 「有一點差、不算穩」; F > 3 → 「有差」; D < 0 → 「帶 skill 反而差」. If baseline STOP → 「不帶 skill 就全過：這組題測不出 skill 的貢獻」. If confirmatory `primary.claimStatus` exists, prefix its level (確證句成立／確證口徑但分不出／描述性) — optional, only when the field is present.
-2. **贏在哪、輸在哪？** — per assertion (scored only), compare with vs baseline pass counts:
+2. **優點在哪、缺點在哪？**（舊名「贏在哪、輸在哪」，2026-08-19 改） — per assertion (scored only), compare with vs baseline pass counts:
    - wins: assertions where with > baseline, sorted by gap desc, top 3: 「<label>：不帶 N 次裡 M 次沒過，帶 skill 全過／N 次裡 M 次過」
    - losses: assertions where with < baseline (top 3) 「帶 skill 反而…」; plus 「兩組都全掛」 items (恆不過) as 「<label>：帶不帶都沒過——標準太嚴或規則不清，去看產出」; plus false triggers if `footprint.negativeFired > 0`: 「不該出手的題目 N 次裡 M 次 skill 還是被叫起來」; plus 「skill 沒真的被載入」 if fired < known.
    - if a third arm (reminder) exists: one line 「只給一句提醒那組過 R 格：skill 的內容比一句提醒多 X 格」 (from `placebo`).
@@ -38,8 +38,8 @@ Rules for the text:
 ## Target text (hand-written from the real clarify report `gauge/clarify-20260818/runs/20260818-1921` — the generated version should read like this)
 
 > **有沒有幫上忙？** 帶 skill 的 54 格裡過 50 格，不帶的過 45 格——多 5 格；翻 6 格就反過來，所以是「有一點差、不算穩」。
-> **贏在哪**：不該重寫的時候不出手（不帶 3 次裡 2 次把清單改寫了，帶 skill 3 次都守住）；抽象英文詞翻白話（不帶 3 次裡 1 次沒翻，帶 skill 全翻）；不加料（不帶 3 次裡 1 次加了原文沒有的理由，帶 skill 都沒加）。
-> **輸在哪**：技術名詞保留英文原文——帶不帶都 3 次全沒過，去看產出；不該出手的題目 6 次裡 3 次 skill 還是被叫起來（該叫的時候 15 次裡 14 次有叫）；只給一句提醒那組過 41 格，比不帶還差——skill 的內容比一句提醒多 9 格。
+> **優點在哪**：不該重寫的時候不出手（不帶 3 次裡 2 次把清單改寫了，帶 skill 3 次都守住）；抽象英文詞翻白話（不帶 3 次裡 1 次沒翻，帶 skill 全翻）；不加料（不帶 3 次裡 1 次加了原文沒有的理由，帶 skill 都沒加）。
+> **缺點在哪**：技術名詞保留英文原文——帶不帶都 3 次全沒過，去看產出；不該出手的題目 6 次裡 3 次 skill 還是被叫起來（該叫的時候 15 次裡 14 次有叫）；只給一句提醒那組過 41 格，比不帶還差——skill 的內容比一句提醒多 9 格。
 > **這次的限制**：只有 5 題、每題 3 次、sonnet 執行、opus 評分；13 條檢查兩組都全過，題目對這個模型太簡單；翻 6 格就反轉，不要當定論。
 > **下一步**：改題——把兩組都全過的那幾條換成模型會失手的情境，或刪掉那條檢查。
 

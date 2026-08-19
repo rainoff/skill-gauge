@@ -54,7 +54,7 @@ function natCmp(a, b) {
 const secFromMs = (ms) => (num(ms) === null ? null : num(ms) / 1000);
 
 // ---------- 中文對照 ----------
-const FAMILY_LABEL = { gate: '前置檢查', fact: '事實紀律', judgment: '判斷紀律', orientation: '取向觀察' };
+const FAMILY_LABEL = { gate: '前置檢查', fact: '事實檢查', judgment: '判斷檢查', orientation: '取向觀察' };
 const FAMILY_UNSCORED = new Set(['gate', 'orientation']);
 const FAMILY_ORDER = { gate: 0, fact: 1, judgment: 2, orientation: 3 };
 const CASE_TYPE = { trap: '陷阱題', clean: '乾淨對照題', negative: '負向對照題', pressure: '壓力測試題' };
@@ -427,7 +427,7 @@ export function renderReportHtml(report, opts = {}) {
   const footer = [
     `<p>這一頁由 skill-gauge 的 <code>render.mjs</code> 直接從 <code>report.json</code> 產生：沒有連任何外部資源，可以離線開、也可以整份寄給別人。</p>`,
     `<p>頁面上的每個數字都只描述這一次的條件${condBits.length ? `（${condBits.join('、')}）` : ''}。換一個模型、換一組題目，數字就不是這樣。</p>`,
-    `<p>能說與不能說的最終措辭，以 pre-registration 裡寫死的那一段為準；有旗標的地方，結論要跟旗標一起講。</p>`,
+    `<p>可說明與無法說明的最終措辭，以 pre-registration 裡寫死的那一段為準；有旗標的地方，結論要跟旗標一起講。</p>`,
   ].join('\n');
 
   return page({ title, h1: title, chipsHtml: chips.join(''), sections, footerHtml: footer });
@@ -441,7 +441,7 @@ function secSummary(r) {
   const list = (title, arr) => (asArr(arr).length ? `<h3>${esc(title)}</h3><ul class="keypoints">${asArr(arr).map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '');
   return section('summary', '摘要結論（給人看的一頁）',
     `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>有沒有幫上忙？</strong> ${esc(txt(sm.helped))}</p>
-${list('贏在哪', sm.wins)}${list('輸在哪／要注意', sm.losses)}${list('這次的限制', sm.limits)}${list('下一步', sm.next)}
+${list('優點在哪', sm.wins)}${list('缺點在哪／要注意', sm.losses)}${list('這次的限制', sm.limits)}${list('該怎麼改', sm.next)}
 <p class="note">下面是工程細節；轉述給別人只用這一頁。</p>`);
 }
 
@@ -569,18 +569,18 @@ function secKeyPoints(r, arms, sens) {
   }
 
   const items = L.map((s) => `<li>${s}</li>`).join('\n');
-  const lastLine = `<li class="last">這些都是描述，不是因果；能不能說「skill 有用」，看 pre-registration 寫死的「能說／不能說」。</li>`;
+  const lastLine = `<li class="last">這些都是描述，不是因果；能不能說「skill 有用」，看 pre-registration 寫死的「可說明／無法說明」。</li>`;
   return section('key', '先看這裡', `<ul class="keypoints">\n${items}\n${lastLine}\n</ul>`, '描述性，只限這次條件。');
 }
 
-// 2. 能說／不能說
+// 2. 可說明／無法說明
 function secSayNotSay() {
   return section(
     'saynotsay',
-    '能說／不能說',
-    `<p class="bar"><strong>能說：</strong>上面這些描述性的數字，而且只限這一次的條件。<br>
-<strong>不能說：</strong>因果通則、外推到這組題目以外的任務、跨模型比較。<br>
-最終措辭以 pre-registration 寫死的「能說／不能說」為準；有旗標的地方，結論要跟著旗標一起講。</p>`
+    '可說明／無法說明',
+    `<p class="bar"><strong>可說明：</strong>上面這些描述性的數字，而且只限這一次的條件。<br>
+<strong>無法說明：</strong>因果通則、外推到這組題目以外的任務、跨模型比較。<br>
+最終措辭以 pre-registration 寫死的「可說明／無法說明」為準；有旗標的地方，結論要跟著旗標一起講。</p>`
   );
 }
 
@@ -733,7 +733,7 @@ ${table(
 )}`;
   }
 
-  return section('totals', '總表', inner, '只計事實紀律與判斷紀律；前置檢查不計分、取向觀察不計分。');
+  return section('totals', '總表', inner, '只計事實檢查與判斷檢查；前置檢查不計分、取向觀察不計分。');
 }
 
 // 5. 逐條檢查項 × 組
@@ -1341,7 +1341,7 @@ ${table(['檢查項', ...combos.map((c) => ({ html: `${esc(nz(txt(c.executorMode
   ];
 
   const footer = `<p>這一頁由 skill-gauge 的 <code>render.mjs</code> 從 <code>matrix.json</code> 產生，沒有連任何外部資源。每一格的連結指向該組合自己的 <code>report.html</code>（要先渲染過才打得開）。</p>
-<p>所有數字都只描述這一次的條件。跨組合的比較是描述，不是因果；能說與不能說以 pre-registration 為準。</p>`;
+<p>所有數字都只描述這一次的條件。跨組合的比較是描述，不是因果；可說明與無法說明以 pre-registration 為準。</p>`;
 
   return page({ title, h1: title, chipsHtml: chips.join(''), sections, footerHtml: footer });
 }
@@ -1532,7 +1532,7 @@ export function mdToHtml(md, opts = {}) {
 // ============================================================
 const PREVIEW_CHECK_LABEL = {
   'prereg-exists': 'pre-registration.md',
-  'say-notsay-found': '能說／不能說',
+  'say-notsay-found': '可說明／無法說明',
   'has-gate': '前置檢查',
   'has-trap': '陷阱題',
   'has-clean': '乾淨對照題',
@@ -1589,7 +1589,7 @@ function secPreviewChecks(d) {
 <li>①題目來自你的翻車案例或 skill 自己的宣稱</li>
 <li>②兩組共用的指令沒有洩題（不含 skill 的核心指令詞）</li>
 <li>③前置檢查兩組都做得到（不是 skill 教的格式）</li>
-<li>④能說／不能說你同意</li>
+<li>④可說明／無法說明你同意</li>
 <li>⑤成本可以接受</li>
 </ul>`;
   return section('checks', '核可前自檢', inner);
@@ -1704,13 +1704,13 @@ function secPreviewCost(cost) {
 function secPreviewSayNotSay(prereg) {
   const p = asObj(prereg);
   if (!p.exists) return null;
-  if (p.say == null && p.notSay == null && p.combined == null) return section('say-notsay', '能說／不能說', `<p class="bar">預先登錄裡找不到標題含「能說」「不能說」的段落——核可前請補上。</p>`);
+  if (p.say == null && p.notSay == null && p.combined == null) return section('say-notsay', '可說明／無法說明', `<p class="bar">預先登錄裡找不到標題含「可說明」「無法說明」的段落——核可前請補上。</p>`);
   const inner = [
-    p.combined != null ? `<div class="bar"><strong>${esc(txt(p.combinedHeading) || '能說／不能說')}</strong>${mdToHtml(p.combined)}</div>` : '',
-    p.say != null ? `<div class="bar"><strong>能說</strong>${mdToHtml(p.say)}</div>` : '',
-    p.notSay != null ? `<div class="bar"><strong>不能說</strong>${mdToHtml(p.notSay)}</div>` : '',
+    p.combined != null ? `<div class="bar"><strong>${esc(txt(p.combinedHeading) || '可說明／無法說明')}</strong>${mdToHtml(p.combined)}</div>` : '',
+    p.say != null ? `<div class="bar"><strong>可說明</strong>${mdToHtml(p.say)}</div>` : '',
+    p.notSay != null ? `<div class="bar"><strong>無法說明</strong>${mdToHtml(p.notSay)}</div>` : '',
   ].join('');
-  return section('say-notsay', '能說／不能說', inner);
+  return section('say-notsay', '可說明／無法說明', inner);
 }
 
 function secPreviewFull(prereg) {

@@ -63,7 +63,7 @@ node scripts/gauge.mjs preview --config <gauge.json> [--out <file.html>] [--open
 }
 ```
 
-Labels (zh): type `trap→陷阱題`, `clean→乾淨對照題`, `negative→負向對照題`, `pressure→壓力題`, else the raw type; family `gate→前置檢查（不計分）`, `fact→事實紀律`, `judgment→判斷紀律`, `orientation→取向觀察（不計分）`. `scored = family ∈ {fact, judgment}`.
+Labels (zh): type `trap→陷阱題`, `clean→乾淨對照題`, `negative→負向對照題`, `pressure→壓力題`, else the raw type; family `gate→前置檢查（不計分）`, `fact→事實檢查`, `judgment→判斷檢查`, `orientation→取向觀察（不計分）`. `scored = family ∈ {fact, judgment}`.
 
 Cost (all integers; caliber = what the engine actually spends, corrected 2026-08-18 after critic review):
 - `executions = cases × arms × runs` (arms = baseline arm only when the config has no skill)
@@ -80,7 +80,7 @@ Version: the approval page is an additive patch on v1.1 (the talk, README and sl
 
 Lock: no `lock.json` → `none`; exists and `verifyLock(cfg, lockPath).ok` → `locked` (+ lockedAt, relocks, engineAtLock); exists but mismatch → `mismatch` (+ diffs).
 
-Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay` / `combined`: scan headings (any level); test the not-say pattern first (`/不能說|cannot say|can't say|must not say|not permitted|what we can('t|not) say/i`), then the say pattern (`/(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i`); the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that match **both** (e.g. "能說／不能說") → the whole body goes to `combined` with `combinedHeading` = the heading text (rendered under its own heading, never labelled 能說 alone).
+Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay` / `combined`: scan headings (any level); test the not-say pattern first (`/不能說|cannot say|can't say|must not say|not permitted|what we can('t|not) say/i`), then the say pattern (`/(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i`); the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that match **both** (e.g. "可說明／無法說明") → the whole body goes to `combined` with `combinedHeading` = the heading text (rendered under its own heading, never labelled 能說 alone).
 
 Checks (automated hints — every one must be cheap and deterministic; `ok: null` = not applicable):
 - `prereg-exists` — `pre-registration.md` present.
@@ -106,14 +106,14 @@ Text for each is zh, one sentence, written from the reader's point of view (「�
 Reuse `page`, `section`, `table`, `chip`, `CSS`, `PAGE_JS`. Language of the page: Traditional Chinese (same as report.html). Sections, in this order (each may be null → skipped):
 
 1. **先看這裡** — one paragraph: 量 `<skill>`（路徑）／幾題×幾組×幾次／估 N 次模型呼叫（停案時最少 M 次）／鎖定狀態 chip／自檢 ✓ x ⚠ y. Then a chip row: 執行模型・effort・評分模型・次數・組數・鎖定狀態.
-2. **核可前自檢** — table of `checks` (✓ / ⚠ / –, sentence). Below it a static `<ul>` titled 「這五條引擎判不了，請你看完題目後自己確認」: ①題目來自你的翻車案例或 skill 自己的宣稱 ②兩組共用的指令沒有洩題（不含 skill 的核心指令詞） ③前置檢查兩組都做得到（不是 skill 教的格式） ④能說／不能說你同意 ⑤成本可以接受.
+2. **核可前自檢** — table of `checks` (✓ / ⚠ / –, sentence). Below it a static `<ul>` titled 「這五條引擎判不了，請你看完題目後自己確認」: ①題目來自你的翻車案例或 skill 自己的宣稱 ②兩組共用的指令沒有洩題（不含 skill 的核心指令詞） ③前置檢查兩組都做得到（不是 skill 教的格式） ④可說明／無法說明你同意 ⑤成本可以接受.
 3. **條件與各組** — conditions table (執行模型／effort／評分模型／每題每組次數／可用工具) + arms table (組名／拿到什麼／路徑).
 4. **題組** — table (id／題型／材料／檢查項數／備註) then one `<details>` per case: `<summary>` = id＋題型＋備註; inside: 「兩組共用的指令（逐字）」`<pre>` with the full prompt, then 「材料」 per file: name, size, `<pre>` with `head` (+ 「…（只顯示前 600 字）」 when truncated), pressure block when present (規則／壓力／預期行為／預期選項).
 5. **檢查項** — one table per family in the order gate, fact, judgment, orientation: id／文字（label, with text underneath in smaller type when both exist）／適用題／計分？(✓/–)／自動加入？(implicit).
 6. **觸發題** — two lists (該觸發／不該觸發) + runs; note that these only run with `--with-trigger` or `describe`.
 7. **矩陣** — table of cells (only if `matrix`).
 8. **成本估算** — table (執行／評分／已知答案檢查／評分者自證／觸發／矩陣格數／合計) + the `formula` string + one sentence: 「引擎預設先跑不帶 skill 那組，全過就停案，最少只花 M 次」.
-9. **能說／不能說** — two `<div class="bar">` blocks with `mdToHtml(say)` / `mdToHtml(notSay)`; if neither found: a warning paragraph 「預先登錄裡找不到標題含『能說』『不能說』的段落——核可前請補上」.
+9. **可說明／無法說明** — two `<div class="bar">` blocks with `mdToHtml(say)` / `mdToHtml(notSay)`; if neither found: a warning paragraph 「預先登錄裡找不到標題含『能說』『不能說』的段落——核可前請補上」.
 10. **預先登錄全文** — `<details open>` with `mdToHtml(prereg.markdown)`; when the file is missing: warning paragraph（lock 會拒絕，除非 --allow-missing-prereg）.
 11. Footer (always): 「這一頁不是核可對象——核可的是檔案。說『可以』之後執行 lock，鎖的是 gauge.json、pre-registration.md、題目、材料、skill 的雜湊；這一頁改了不算數，檔案改了要重出核可頁、重新核可、--relock。」 plus the standard 「沒有連任何外部資源，可離線開」 line.
 
@@ -132,8 +132,8 @@ Replace the current 第 3 步 with (keep the heading style of the file):
 ```
 node <SKILL_DIR>/scripts/gauge.mjs preview --config gauge/<dir>/gauge.json --open
 ```
-它把 gauge.json＋pre-registration.md 整理成一頁：條件與各組、每題兩組共用的指令與材料、四類檢查項、觸發題、成本估算（含停案時最少花多少）、能說／不能說、核可前自檢（引擎判得了的自動打勾，判不了的五條列給人勾）。
-帶使用者看這一頁，只講三件事：題目是不是他的翻車、對照組拿到的指令有沒有洩題、能說／不能說他同不同意；然後問：「這份預先登錄可以嗎？可以我才鎖定並開跑；改了要重出核可頁、重新核可。」
+它把 gauge.json＋pre-registration.md 整理成一頁：條件與各組、每題兩組共用的指令與材料、四類檢查項、觸發題、成本估算（含停案時最少花多少）、可說明／無法說明、核可前自檢（引擎判得了的自動打勾，判不了的五條列給人勾）。
+帶使用者看這一頁，只講三件事：題目是不是他的翻車、對照組拿到的指令有沒有洩題、可說明／無法說明他同不同意；然後問：「這份預先登錄可以嗎？可以我才鎖定並開跑；改了要重出核可頁、重新核可。」
 使用者說可以之前，**不開跑、不寫任何結論**。核可對象是檔案不是頁面：說可以之後執行
 ```
 node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
@@ -145,7 +145,7 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
 Add to 第 2 步 (after the `results.md` bullet):
 
 ```
-- 語言：**執行檔用英文**——pre-registration.md（除了「能說／不能說」那一段用使用者的語言，因為結果會逐字引用）、gauge.json 的 note／id／slug、壓力題的 rule 與 pressures、觸發題的說明。**題目指令與材料維持真實任務的語言**：它們是受測刺激，使用者平常怎麼下指令就怎麼寫，不翻譯。檢查項的 `text` 是給評分者的判斷句，用英文；同一條再給一句使用者語言的 `label`（核可頁與報告顯示 label，評分只讀 text）。給人看的東西——核可頁、報告、你在對話裡說的話——用使用者的語言。
+- 語言：**執行檔用英文**——pre-registration.md（除了「可說明／無法說明」那一段用使用者的語言，因為結果會逐字引用）、gauge.json 的 note／id／slug、壓力題的 rule 與 pressures、觸發題的說明。**題目指令與材料維持真實任務的語言**：它們是受測刺激，使用者平常怎麼下指令就怎麼寫，不翻譯。檢查項的 `text` 是給評分者的判斷句，用英文；同一條再給一句使用者語言的 `label`（核可頁與報告顯示 label，評分只讀 text）。給人看的東西——核可頁、報告、你在對話裡說的話——用使用者的語言。
 ```
 
 Also update the `gauge.json` field list in SKILL.md: `assertions[{id, family, text, label(可選), cases[]}]`. Update 第 4 步 cost sentence to say the approval page already shows the estimate（「核可頁已算過；照它報」）.

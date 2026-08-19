@@ -122,6 +122,8 @@ t('描述優化 markdown：最佳輪與逐題', /最佳（第 1 輪/.test(dmd) &
 t('能說／不能說：合併標題整段當 combined、標題照原文，say／notSay 留空', (() => { const r = extractSayNotSay('## 能說／不能說（先寫死）\n- 能說 A\n- 不能說 B\n\n## 執行紀律\n其他'); return /能說 A/.test(r.combined) && /不能說 B/.test(r.combined) && r.say === null && r.notSay === null && /能說／不能說/.test(r.combinedHeading); })());
 t('能說／不能說：英文 not permitted claims 歸不能說、what we can\'t say 也認得', (() => { const r = extractSayNotSay('## Permitted claims\nP\n\n## Not permitted claims\nNP\n'); const r2 = extractSayNotSay('## What we can say\nA\n\n## What we can\'t say\nB\n'); return r.say.trim() === 'P' && r.notSay.trim() === 'NP' && r2.say.trim() === 'A' && r2.notSay.trim() === 'B'; })());
 t('能說／不能說：分開標題各自擷取，內文到下一個同層標題為止', (() => { const r = extractSayNotSay('## 能說\n段落一\n\n## 不能說\n段落二\n\n## 其他\n段落三'); return r.say.trim() === '段落一' && r.notSay.trim() === '段落二'; })());
+t('可說明／無法說明（新詞）：合併標題整段當 combined', (() => { const r = extractSayNotSay('## 這次測量可說明／無法說明什麼\n- 可說明 A\n- 無法說明 B\n\n## 其他\nX'); return r.combined != null && /可說明 A/.test(r.combined) && r.say === null && r.notSay === null; })());
+t('可說明／無法說明（新詞）：分開標題各自擷取；「無法說明」不得被當成可說明', (() => { const r = extractSayNotSay('## 可說明\n段落一\n\n## 無法說明\n段落二\n\n## 其他\n段落三'); return /段落一/.test(r.say || '') && !/段落二/.test(r.say || '') && /段落二/.test(r.notSay || ''); })());
 t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒有相關段落').say === null && extractSayNotSay('# 標題\n沒有相關段落').notSay === null);
 
 // 核可頁：buildPreview 成本數學（hand-computed：5 題 × 3 組 × 2 次，觸發 8+8×2，矩陣 2 格）
@@ -170,7 +172,7 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   t('assertionLabel：label 優先；沒有就取首子句、超長截在頓號', assertionLabel({ label: 'L', text: 'T' }) === 'L' && assertionLabel({ text: '技術名詞與檔名／測試名（`fixture`）仍出現' }) === '技術名詞與檔名／測試名' && /…$/.test(assertionLabel({ text: '抽象英文詞 hypothesis、falsified、root cause、state leakage、measure、next action 沒有原文照抄' })));
   const R = await import('./render.mjs');
   const h = R.renderReportHtml({ ...rep, summary: sm, generatedAt: 'T', cost: {}, similarity: [], runs: [], sensitivity: { delta: 3, flipsToErase: 3, flipsToReverse: 4, note: '' }, lock: { ok: true, lockedAt: 'L' } }, {});
-  t('render：摘要結論是第一個區塊、含四問', h.indexOf('摘要結論') < h.indexOf('先看這裡') && /有沒有幫上忙/.test(h) && /贏在哪/.test(h));
+  t('render：摘要結論是第一個區塊、含四問（優點在哪／缺點在哪／該怎麼改）', h.indexOf('摘要結論') < h.indexOf('先看這裡') && /有沒有幫上忙/.test(h) && /優點在哪/.test(h) && !/贏在哪/.test(h));
 }
 
 // HTML 渲染器（若存在）：三種都能吐出含關鍵字的 HTML、不含外部資源
@@ -207,7 +209,7 @@ try {
     ],
     conditions: { executorModel: 'm', executorEffort: null, judgeModel: 'j', runs: 2, allowedTools: [] },
     cases: [{ id: 'c1', type: 'clean', typeLabel: '乾淨對照題', promptFile: 'c1.md', prompt: '<script>x</script>', materials: [], assertions: ['x'], note: null, pressure: null }],
-    assertions: [{ id: 'x', family: 'fact', familyLabel: '事實紀律', text: 'X', label: null, scored: true, implicit: false, cases: ['c1'] }],
+    assertions: [{ id: 'x', family: 'fact', familyLabel: '事實檢查', text: 'X', label: null, scored: true, implicit: false, cases: ['c1'] }],
     trigger: null, matrix: null,
     cost: { cases: 1, arms: 2, runs: 2, executions: 2, gradings: 2, isolationChecks: 4, graderSelfCheck: 2, triggerRuns: 0, matrixCells: 1, totalCalls: 16, minCallsIfStop: 10, formula: 'f' },
     lock: { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] },

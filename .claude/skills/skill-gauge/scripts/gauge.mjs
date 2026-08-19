@@ -238,7 +238,7 @@ function loadConfig(p) {
     for (const m of c.__materials) if (!fs.existsSync(m)) die(`材料不存在：${m}`);
     const bn = c.__materials.map((m) => path.basename(m)); if (new Set(bn).size !== bn.length) die(`case ${c.id} 的材料檔名重複（沙箱只放檔名，會互相覆蓋）：${bn.join('、')}`);
     c.assertions = c.assertions || cfg.assertions.filter((a) => !a.cases || a.cases.includes(c.id)).map((a) => a.id);
-    // 壓力測試題：規則＋壓力種類＋預期（comply＝該守住／exempt＝該正確不套用）；引擎自動加一條「守住規則」的判斷紀律檢查項
+    // 壓力測試題：規則＋壓力種類＋預期（comply＝該守住／exempt＝該正確不套用）；引擎自動加一條「守住規則」的判斷檢查檢查項
     if (c.type === 'pressure') {
       if (!c.rule) die(`壓力題 ${c.id} 缺 rule（一句話寫 skill 規定什麼）`);
       c.expectedBehavior = c.expectedBehavior || 'comply';
@@ -712,8 +712,8 @@ function buildReport(cfg, outDir) {
       }
       if (b && b.total && (b.violated || b.overapplied || b.refused)) report.flags.push(`基準組在壓力下也${b.violated ? '折了' : b.overapplied ? '硬套' : '拒做'}：${c.id} 不帶 skill ${b.held}/${b.total - b.inconclusive} 次守住——比較時要看的是兩組差幾次，不是帶 skill 那組的絕對值`);
       const bAllHeld = b && b.total - b.inconclusive > 0 && b.held === b.total - b.inconclusive;
-      if (bAllHeld && w && w.total - w.inconclusive > 0 && w.held === w.total - w.inconclusive) report.flags.push(`零鑑別：${c.id} 兩組都每次守住——這條紀律模型本來就有，測不出 skill 的貢獻`);
-      else if (bAllHeld && (!w || w.total === 0)) report.flags.push(`基準組守住：${c.id} 不帶 skill 每次都守住（帶 skill 那組未跑）——這條紀律模型本來就有`);
+      if (bAllHeld && w && w.total - w.inconclusive > 0 && w.held === w.total - w.inconclusive) report.flags.push(`零鑑別：${c.id} 兩組都每次守住——這條規則模型本來就有，測不出 skill 的貢獻`);
+      else if (bAllHeld && (!w || w.total === 0)) report.flags.push(`基準組守住：${c.id} 不帶 skill 每次都守住（帶 skill 那組未跑）——這條規則模型本來就有`);
     }
     report.pressure = pr;
     if (pr.capture.length) writeJSON(path.join(outDir, 'pressure-capture.json'), pr.capture);
@@ -803,7 +803,7 @@ function runDetail(runDir, meta, g) {
 }
 
 
-// ---------- 摘要結論：給人看的一頁（不出現 id、不出現組名代號、一個主數字；四問：有沒有幫上忙／贏在哪輸在哪／限制／下一步） ----------
+// ---------- 摘要結論：給人看的一頁（不出現 id、不出現組名代號、一個主數字；四問：有沒有幫上忙／優點缺點在哪／限制／該怎麼改） ----------
 const ARM_ZH = { with: '帶 skill', without: '不帶', reminder: '只給一句提醒' };
 const armZh = (name) => ARM_ZH[name] || `另一個 skill（${name}）`;
 // 檢查項的人話名：優先 label；沒有就取 text 的第一個子句（到「；」「，」「（」或 24 字）
@@ -834,7 +834,7 @@ function plainSummary(r) {
     if (r.primary?.claimStatus === 'confirmatory-claim') out.helped = `【確證句成立】` + out.helped; else if (r.primary?.claimStatus === 'confirmatory-null') out.helped = `【確證口徑：分不出方向】` + out.helped;
   }
   out.oneLine = out.helped;
-  // 2. 贏在哪、輸在哪（逐條檢查項）
+  // 2. 優點在哪、缺點在哪（逐條檢查項）
   const rows = Object.entries(r.assertions || {}).filter(([, x]) => x.family === 'fact' || x.family === 'judgment').map(([id, x]) => ({ id, label: assertionLabel(x), a: x.arms?.[A], b: x.arms?.[B] })).filter((x) => x.a && x.b && x.a.total && x.b.total);
   const wins = rows.filter((x) => x.a.pass / x.a.total > x.b.pass / x.b.total).sort((x, y) => (y.a.pass / y.a.total - y.b.pass / y.b.total) - (x.a.pass / x.a.total - x.b.pass / x.b.total)).slice(0, 3);
   for (const w of wins) out.wins.push(`${w.label}：不帶 ${timesZh(w.b.total - w.b.pass, w.b.total)}沒過，帶 skill ${w.a.pass === w.a.total ? '全過' : timesZh(w.a.pass, w.a.total) + '過'}`);
@@ -854,7 +854,7 @@ function plainSummary(r) {
   if (tA && tB && tA.total === tB.total && tA.pass !== tB.pass) out.limits.push(`翻 ${Math.abs(tA.pass - tB.pass) + 1} 格就反轉，不要當定論`);
   if ((r.invalidRuns || []).length || (r.harnessFailures || []).length) out.limits.push(`有 ${(r.invalidRuns || []).length} 次作廢、${(r.harnessFailures || []).length} 次執行／評分失敗，數字還不完整`);
   if ((r.flags || []).some((f) => f.startsWith('同格'))) out.limits.push('同一題重複跑的結果幾乎一樣，有效樣本比次數少');
-  // 4. 下一步（人話版）
+  // 4. 該怎麼改（人話版）
   const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實翻車、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看作廢', '先看作廢的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
   for (const n of r.nextSteps || []) { const hit = NEXT.find(([k]) => n.startsWith(k)); out.next.push(hit ? hit[1] : n.replace(/`[^`]*`/g, '').slice(0, 120)); }
   out.next = [...new Set(out.next)].slice(0, 3);
@@ -862,10 +862,10 @@ function plainSummary(r) {
 }
 function summaryMarkdown(sm) {
   const L = ['## 摘要結論（給人看的一頁）', '', `**有沒有幫上忙？** ${sm.helped}`, ''];
-  if (sm.wins.length) L.push(`**贏在哪：**`, ...sm.wins.map((x) => `- ${x}`), '');
-  if (sm.losses.length) L.push(`**輸在哪／要注意：**`, ...sm.losses.map((x) => `- ${x}`), '');
+  if (sm.wins.length) L.push(`**優點在哪：**`, ...sm.wins.map((x) => `- ${x}`), '');
+  if (sm.losses.length) L.push(`**缺點在哪／要注意：**`, ...sm.losses.map((x) => `- ${x}`), '');
   L.push(`**這次的限制：**`, ...sm.limits.map((x) => `- ${x}`), '');
-  if (sm.next.length) L.push(`**下一步：**`, ...sm.next.map((x) => `- ${x}`), '');
+  if (sm.next.length) L.push(`**該怎麼改：**`, ...sm.next.map((x) => `- ${x}`), '');
   L.push('（下面是工程細節；轉述給別人只用這一頁）', '');
   return L;
 }
@@ -897,7 +897,7 @@ function reportMarkdown(cfg, r) {
   if (r.pressure) L.push(`- 壓力測試：${arms.map((a) => { const x = r.pressure.summary[a]; return x && x.total ? `${a} 守住 ${x.held}/${x.total}` : `${a} 未跑`; }).join('、')}${r.pressure.capture.length ? `；折了或硬套的 ${r.pressure.capture.length} 次，合理化說詞已逐字擷取` : ''}。`);
   if (r.conditions.executorEffort) L.push(`- 執行 effort：${r.conditions.executorEffort}（結論只限這個檔位）。`);
   if (r.invalidRuns.length || r.harnessFailures.length) L.push(`- 有 ${r.invalidRuns.length} 次作廢、${r.harnessFailures.length} 次執行／評分失敗，補跑前數字不完整。`);
-  L.push('- 這些都是描述，不是因果；能不能說「skill 有用」，看 pre-registration 寫死的「能說／不能說」。', '');
+  L.push('- 這些都是描述，不是因果；能不能說「skill 有用」，看 pre-registration 寫死的「可說明／無法說明」。', '');
   L.push('## 條件', '', `| 項目 | 值 |`, `|---|---|`);
   L.push(`| 執行模型（設定／實際） | ${r.conditions.executorModel} ／ ${arms.map((a) => `${a}: ${(r.cost[a]?.models || []).join(',') || '?'}`).join('；')} |`);
   L.push(`| 執行 effort | ${r.conditions.executorEffort || '（未指定＝帳號預設）'} |`);
@@ -905,7 +905,7 @@ function reportMarkdown(cfg, r) {
   L.push(`| 已知答案檢查 | ${r.isolation ? r.isolation.items.map((i) => `${i.canary}: ${i.verdict}`).join('；') : '未跑'} |`);
   L.push(`| 評分者自證（已知好壞各一份） | ${r.graderSelfCheck ? (r.graderSelfCheck.ok ? 'PASS' : 'FAIL') + `（good=${r.graderSelfCheck.good}, bad=${r.graderSelfCheck.bad}）` : '未跑'} |`);
   L.push(`| 輸入鎖定（預先登錄＋skill＋題目） | ${r.lock.ok ? `一致（${r.lock.lockedAt}${r.lock.relocks ? `；重鎖過 ${r.lock.relocks} 次` : ''}）` : '不一致或未鎖：' + (r.lock.reason || r.lock.diffs.join('；'))} |`, '');
-  L.push('## 總表（只計事實紀律／判斷紀律；前置檢查不計分、取向觀察不計分）', '', `| 組 | 通過／總格數 |`, `|---|---|`);
+  L.push('## 總表（只計事實檢查／判斷檢查；前置檢查不計分、取向觀察不計分）', '', `| 組 | 通過／總格數 |`, `|---|---|`);
   for (const a of arms) L.push(`| ${a} | ${r.totals[a] ? `${r.totals[a].pass}/${r.totals[a].total}` : '—'} |`);
   if (r.sensitivity) L.push('', r.sensitivity.sameDenominator ? `差距（${arms[0]} − ${arms[1]}）＝ ${r.sensitivity.delta}；抹平要翻 ${r.sensitivity.flipsToErase} 格、反轉要翻 ${r.sensitivity.flipsToReverse} 格。${r.sensitivity.note}` : `差距（${arms[0]} − ${arms[1]}）＝ ${r.sensitivity.delta}，但 ${r.sensitivity.note}`);
   if (r.baseline) {
@@ -921,7 +921,7 @@ function reportMarkdown(cfg, r) {
   for (const a of arms) { const c = r.cost[a] || {}; L.push(`| ${a} | ${c.runs ?? 0} | ${c.medianDurationS?.toFixed?.(0) ?? '?'} | ${c.medianOutputTokens ?? '?'} | ${c.medianCostUsd?.toFixed?.(3) ?? '?'} |`); }
   if (r.trigger) L.push('', '## 觸發測試', '', `該觸發：${r.trigger.should.fired}/${r.trigger.should.n} 次觸發（比例 ${r.trigger.recall?.toFixed(2)}）；不該觸發：${r.trigger.shouldNot.fired}/${r.trigger.shouldNot.n} 次誤觸發（比例 ${r.trigger.falseTriggerRate?.toFixed(2)}）`);
   if (r.pressure) {
-    L.push('', '## 壓力測試（紀律在壓力下守不守得住）', '', `| 情境 | 規則 | 預期 | 壓力 | ${arms.map((a) => `${a} 守住／有效`).join(' | ')} |`, `|---|---|---|---|${arms.map(() => '---').join('|')}|`);
+    L.push('', '## 壓力測試（規則在壓力下守不守得住）', '', `| 情境 | 規則 | 預期 | 壓力 | ${arms.map((a) => `${a} 守住／有效`).join(' | ')} |`, `|---|---|---|---|${arms.map(() => '---').join('|')}|`);
     for (const sc of r.pressure.scenarios) L.push(`| ${sc.case} | ${sc.rule} | ${sc.expectedBehavior} | ${sc.pressures.join('、')} | ${arms.map((a) => { const x = sc.arms[a]; if (!x || !x.total) return '未跑'; const b = [x.violated ? `違反 ${x.violated}` : null, x.overapplied ? `硬套 ${x.overapplied}` : null, x.refused ? `拒做 ${x.refused}` : null, x.inconclusive ? `判不出 ${x.inconclusive}` : null].filter(Boolean).join('、'); return `${x.held}/${x.total - x.inconclusive}${b ? `（${b}）` : ''}${x.citedSkill ? `，引用 skill ${x.citedSkill} 次` : ''}`; }).join(' | ')} |`);
     if (r.pressure.capture.length) { L.push('', '合理化說詞逐字擷取（`pressure-capture.json`，交給建 skill 的工具）：', ''); for (const c of r.pressure.capture) L.push(`- ${c.scenario_id}／${c.arm}／${c.run}：${c.direction === 'overapplied' ? '硬套規則' : c.direction === 'refused' ? '拒做／沒交付' : '違反'}（選了「${c.chosen_option ?? '?'}」，預期「${c.expected_option}」）；起作用的壓力：${c.pressures_that_worked.join('、') || '未標'}${c.rationalizations.length ? '；說詞：' + c.rationalizations.map((x, i) => `「${x}」${c.rationalizations_verbatim && c.rationalizations_verbatim[i] === false ? '（非逐字，產出裡找不到）' : ''}`).join(' ') : ''}`); }
     else L.push('', '沒有折、沒有硬套：每一次有效 run 都守住（或正確不套用）。個位數次數，一次翻就變，照樣看「翻幾格反轉」。');
@@ -932,7 +932,7 @@ function reportMarkdown(cfg, r) {
   if (r.invalidRuns.length) L.push('', `作廢 run（前置檢查未過，需補跑）：${r.invalidRuns.join('、')}`);
   if (r.harnessFailures.length) L.push('', `執行或評分失敗（不算受測物的結果，需補跑）：${r.harnessFailures.join('、')}`);
   L.push('', '## 下一步（由上面的旗標推導；接回建 skill 的迴圈）', '', ...r.nextSteps.map((n) => `- ${n}`));
-  L.push('', '## 這張表能說與不能說', '', '- 能說的只有上面的描述性數字，而且只限這次的條件。', '- 不能說：因果通則、外推到題組之外的任務、跨模型比較。詳細措辭以 pre-registration 的「能說／不能說」為準。', '- 有旗標的地方，結論要跟著旗標一起講。');
+  L.push('', '## 這張表可說明與無法說明', '', '- 可說明的只有上面的描述性數字，而且只限這次的條件。', '- 無法說明：因果通則、外推到題組之外的任務、跨模型比較。詳細措辭以 pre-registration 的「可說明／無法說明」為準。', '- 有旗標的地方，結論要跟著旗標一起講。');
   return L.join('\n') + '\n';
 }
 
@@ -1272,7 +1272,7 @@ function describeMarkdown(d) {
 
 // ---------- 核可頁（preview）：把 gauge.json＋pre-registration.md 整理成一頁給人核可，不用 claude ----------
 const PREVIEW_TYPE_LABEL = { trap: '陷阱題', clean: '乾淨對照題', negative: '負向對照題', pressure: '壓力題' };
-const PREVIEW_FAMILY_LABEL = { gate: '前置檢查（不計分）', fact: '事實紀律', judgment: '判斷紀律', orientation: '取向觀察（不計分）' };
+const PREVIEW_FAMILY_LABEL = { gate: '前置檢查（不計分）', fact: '事實檢查', judgment: '判斷檢查', orientation: '取向觀察（不計分）' };
 function previewTypeLabel(t) { return t ? PREVIEW_TYPE_LABEL[t] || t : null; }
 function previewFamilyLabel(f) { return PREVIEW_FAMILY_LABEL[f] || f; }
 
@@ -1288,7 +1288,7 @@ function readMaterialHead(abs, cap = 600) {
   } catch { return { head: null, truncated: false, bytes: null }; }
 }
 
-// 預先登錄裡「能說／不能說」段落擷取：標題（任何層級）符合關鍵字，內文抓到下一個同層或更高層標題為止；
+// 預先登錄裡「可說明／無法說明」（舊詞「能說／不能說」）段落擷取：標題（任何層級）符合關鍵字，內文抓到下一個同層或更高層標題為止；
 // 標題同時含兩邊關鍵字（例如「能說／不能說」）→ 整段給 say，notSay 留 null
 function extractSayNotSay(md) {
   const lines = txt(md).replace(/\r\n/g, '\n').split('\n');
@@ -1296,8 +1296,8 @@ function extractSayNotSay(md) {
   lines.forEach((line, idx) => { const m = /^(#{1,6})\s+(.*)$/.exec(line); if (m) headings.push({ level: m[1].length, text: m[2].trim(), idx }); });
   // 「能說」的比對排除被「不」接住的那一個（否則「不能說」永遠也會命中「能說」，分不出獨立標題）；
   // 標題同時含兩邊關鍵字（如「能說／不能說」）時，「能說」在句首那次不受「不」影響，isSay 仍會是 true
-  const sayRe = /(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i;
-  const notSayRe = /不能說|cannot say|can't say|must not say|not permitted|what we can't say|what we cannot say/i;
+  const sayRe = /(?<!不)能說|(?<![不無])可說明|可以說明|can say|may say|(?<!not )permitted claims|what we can say/i; // 「可說明／無法說明」為 2026-08-19 起的正式用詞；「能說／不能說」舊檔仍認得
+  const notSayRe = /不能說|無法說明|不可說明|不能說明|cannot say|can't say|must not say|not permitted|what we can't say|what we cannot say/i;
   let say = null, notSay = null, combined = null, combinedHeading = null;
   for (let hi = 0; hi < headings.length; hi++) {
     const h = headings[hi];
@@ -1390,7 +1390,7 @@ function buildPreview(cfg, opts = {}) {
   if (!cfg.__baselineOnly && cfg.skill.name) { const low = String(cfg.skill.name).toLowerCase(); promptLeak = cfg.cases.some((c) => (c.__prompt || '').toLowerCase().includes(low)); }
   const checks = [
     { id: 'prereg-exists', ok: prereg.exists, text: prereg.exists ? '找得到 pre-registration.md。' : '找不到 pre-registration.md——預先登錄還沒寫。' },
-    { id: 'say-notsay-found', ok: !prereg.exists ? null : (prereg.say != null || prereg.notSay != null || prereg.combined != null), text: !prereg.exists ? '沒有 pre-registration.md，這條不適用。' : (prereg.say != null || prereg.notSay != null || prereg.combined != null) ? '預先登錄裡找得到「能說／不能說」的段落。' : '預先登錄裡沒有標題含「能說」或「不能說」的段落。' },
+    { id: 'say-notsay-found', ok: !prereg.exists ? null : (prereg.say != null || prereg.notSay != null || prereg.combined != null), text: !prereg.exists ? '沒有 pre-registration.md，這條不適用。' : (prereg.say != null || prereg.notSay != null || prereg.combined != null) ? '預先登錄裡找得到「可說明／無法說明」的段落。' : '預先登錄裡沒有標題含「可說明」「無法說明」（或舊詞「能說」「不能說」）的段落。' },
     { id: 'has-gate', ok: hasFamily('gate'), text: hasFamily('gate') ? '題組裡有前置檢查（gate）。' : '題組裡沒有前置檢查（gate）——沒有基本格式先擋一手。' },
     { id: 'has-trap', ok: hasType('trap'), text: hasType('trap') ? '有陷阱題。' : '沒有陷阱題。' },
     { id: 'has-clean', ok: hasType('clean'), text: hasType('clean') ? '有乾淨對照題。' : '沒有乾淨對照題。' },
