@@ -32,7 +32,7 @@ git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
 | 講差幾格、改幾個判定會反轉，再給一個粗分（差不多／有一點差、不算穩／有差，依相對差距 5%、15% 切）；粗分是描述、不是統計檢定，結論以你鎖住的可說明／無法說明為準 | 把浮動讀成 skill 的效果 |
 | 結論綁條件：模型、環境、任務型態、使用者能力任一項換了就要重測 | 拿一次結果外推 |
 
-同一份鎖住的題目上還能多做四件事：**壓力測試**（老闆催、加班、「這次先這樣」，看 skill 定的規則守不守得住，藉口逐句留檔）、**換模型或 effort 再測**（`matrix`：對誰是稅、對誰有幫助）、**description 優化**（`describe`：觸發率低時，只動 description，held-out 選最佳，預設不寫回）、**改版後比較**（`compare`：逐條 held／regressed／improved）。指令都在 [SKILL.md](.claude/skills/skill-gauge/SKILL.md)（壓力題設定在第 2 步、執行在第 4 步、改版後比較在第 6 步）。
+同一份鎖住的題目上還能多做四件事：**壓力測試**（老闆催、加班、「這次先這樣」，看 skill 定的規則守不守得住，藉口逐句留檔）、**換模型或 effort 再測**（`matrix`：對誰有幫助、對誰只是負擔）、**description 優化**（`describe`：觸發率低時，只動 description，held-out 選最佳，預設不寫回）、**改版後比較**（`compare`：逐條 held／regressed／improved）。指令都在 [SKILL.md](.claude/skills/skill-gauge/SKILL.md)（壓力題設定在第 2 步、執行在第 4 步、改版後比較在第 6 步）。
 
 ## 裡面有什麼
 

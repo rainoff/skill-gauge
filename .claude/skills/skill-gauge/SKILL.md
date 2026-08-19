@@ -78,7 +78,7 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
   ```
   node <SKILL_DIR>/scripts/gauge.mjs matrix --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM>-matrix [--with-trigger]
   ```
-  成本＝格數 × 上面那個數。矩陣最有用的讀法是「A 模型停案、B 模型繼續」——這個 skill 對誰是稅、對誰有幫助。格與格之間不互相當基準；每格各自看差幾格、翻幾格反轉。
+  成本＝格數 × 上面那個數。矩陣最有用的讀法是「A 模型停案、B 模型繼續」——這個 skill 對誰有幫助、對誰只是負擔。格與格之間不互相當基準；每格各自看差幾格、翻幾格反轉。
 - **描述優化**（觸發率低時；只動 description、不動內容）：
   ```
   node <SKILL_DIR>/scripts/gauge.mjs describe --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM>-describe [--rounds 3] [--runs 3]
