@@ -838,11 +838,16 @@ function plainSummary(r) {
   const rows = Object.entries(r.assertions || {}).filter(([, x]) => x.family === 'fact' || x.family === 'judgment').map(([id, x]) => ({ id, label: assertionLabel(x), a: x.arms?.[A], b: x.arms?.[B] })).filter((x) => x.a && x.b && x.a.total && x.b.total);
   const wins = rows.filter((x) => x.a.pass / x.a.total > x.b.pass / x.b.total).sort((x, y) => (y.a.pass / y.a.total - y.b.pass / y.b.total) - (x.a.pass / x.a.total - x.b.pass / x.b.total)).slice(0, 3);
   for (const w of wins) out.wins.push(`${w.label}：不帶 ${timesZh(w.b.total - w.b.pass, w.b.total)}沒過，帶 skill ${w.a.pass === w.a.total ? '全過' : timesZh(w.a.pass, w.a.total) + '過'}`);
+  out.winsPlain = wins.map((w) => w.label); // 給人看的第一頁只留名目；有沒有過幾次在下面的逐條表
   const losses = rows.filter((x) => x.a.pass / x.a.total < x.b.pass / x.b.total).sort((x, y) => (y.b.pass / y.b.total - y.a.pass / y.a.total) - (x.b.pass / x.b.total - x.a.pass / x.a.total)).slice(0, 3);
   for (const l of losses) out.losses.push(`${l.label}：帶 skill 反而 ${timesZh(l.a.total - l.a.pass, l.a.total)}沒過（不帶 ${timesZh(l.b.total - l.b.pass, l.b.total)}沒過）`);
   const bothFail = rows.filter((x) => x.a.pass === 0 && x.b.pass === 0).slice(0, 2);
   for (const bf of bothFail) out.losses.push(`${bf.label}：帶不帶都 ${bf.a.total} 次全沒過——標準太嚴或規則不清，去看產出`);
+  out.lossesPlain = [...losses.map((l) => l.label), ...bothFail.map((bf) => `${bf.label}（帶不帶都沒過，去看產出）`)];
   const fp = r.footprint;
+  if (fp && fp.negativeKnown && fp.negativeFired > 0) out.lossesPlain.push('不該出手的題目有時還是被叫起來（description 要修）');
+  if (fp && fp.known && fp.fired < fp.known) out.lossesPlain.push('帶 skill 那組不是每次都真的讀了 skill——先看觸發，再談效果');
+  for (const pl of r.placebo || []) { const t = r.totals?.[pl.arm]; if (!t) continue; if (pl.arm === 'reminder') out.lossesPlain.push(pl.reminderEffect < 0 ? '只給一句提醒那組比不帶還差——提醒本身沒用，內容才有' : (Math.abs(pl.contentEffect) <= 2 ? '一句提醒就差不多有同樣效果——內容多的部分沒多貢獻' : 'skill 的內容比一句提醒多貢獻')); }
   if (fp && fp.negativeKnown && fp.negativeFired > 0) out.losses.push(`不該出手的題目 ${timesZh(fp.negativeFired, fp.negativeKnown)} skill 還是被叫起來${r.trigger?.should?.n ? `（該叫的時候 ${timesZh(r.trigger.should.fired, r.trigger.should.n)}有叫）` : ''}`);
   if (fp && fp.known && fp.fired < fp.known) out.losses.push(`帶 skill 那組 ${timesZh(fp.fired, fp.known)}才真的載入 skill——先看觸發，再談效果`);
   for (const pl of r.placebo || []) { const t = r.totals?.[pl.arm]; if (!t) continue; const isReminder = pl.arm === 'reminder'; out.losses.push(`${armZh(pl.arm)}那組過 ${t.pass} 格${pl.reminderEffect < 0 ? '，比不帶還差' : ''}——${isReminder ? 'skill 的內容比一句提醒多' : '帶這個 skill 比它多'} ${pl.contentEffect} 格${Math.abs(pl.contentEffect) <= 2 ? '（差距很小）' : ''}`); }
@@ -858,14 +863,25 @@ function plainSummary(r) {
   const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實翻車、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看作廢', '先看作廢的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
   for (const n of r.nextSteps || []) { const hit = NEXT.find(([k]) => n.startsWith(k)); out.next.push(hit ? hit[1] : n.replace(/`[^`]*`/g, '').slice(0, 120)); }
   out.next = [...new Set(out.next)].slice(0, 3);
+  // 5. 需不需要改進？（給非工程師的一句話；改哪裡＝該怎麼改那幾條）
+  const Dn = tA && tB ? tA.pass - tB.pass : null, Fn = tA && tB && tA.total === tB.total ? Math.abs(Dn) + 1 : null;
+  out.needFix = out.verdict === 'stop' ? '不用改 skill，先改題：不帶 skill 的模型這幾題每次都做對，這組題測不出它的貢獻——對這個模型它可能是多餘的；想確認就換個模型再測一格。'
+    : out.verdict === 'no-data' ? '先補跑：兩組還沒有可以比的結果。'
+    : out.verdict === 'worse' ? `要改：帶 skill 反而比不帶少過 ${Math.abs(Dn)} 格——先看下面「缺點」那幾條，回產出對照。`
+    : out.verdict === 'same' ? '不用急著改 skill，先改題：兩組差不多，這組題測不出差別。'
+    : out.verdict === 'small' ? `值得改：有一點幫助但不穩（多 ${Dn} 格${Fn ? `、改 ${Fn} 個判定就反轉` : ''}）——先看「缺點」那幾條，再看兩組都全過的題。`
+    : `有幫助，可以留著：多 ${Dn} 格；想更好就看「缺點」那幾條。`;
   return out;
 }
 function summaryMarkdown(sm) {
+  const wins = sm.winsPlain ?? sm.wins, losses = sm.lossesPlain ?? sm.losses;
   const L = ['## 摘要結論（給人看的一頁）', '', `**有沒有幫上忙？** ${sm.helped}`, ''];
-  if (sm.wins.length) L.push(`**優點在哪：**`, ...sm.wins.map((x) => `- ${x}`), '');
-  if (sm.losses.length) L.push(`**缺點在哪／要注意：**`, ...sm.losses.map((x) => `- ${x}`), '');
+  if (sm.needFix) L.push(`**需不需要改進？** ${sm.needFix}`, '');
+  if (sm.next.length) L.push(`**該怎麼改（改哪裡）：**`, ...sm.next.map((x) => `- ${x}`), '');
+  if (wins.length) L.push(`**優點在哪：** ${wins.join('；')}`, '');
+  if (losses.length) L.push(`**缺點在哪／要注意：** ${losses.join('；')}`, '');
   L.push(`**這次的限制：**`, ...sm.limits.map((x) => `- ${x}`), '');
-  if (sm.next.length) L.push(`**該怎麼改：**`, ...sm.next.map((x) => `- ${x}`), '');
+  L.push('（優缺點每條有沒有過幾次，在下面「逐條檢查項」那張表）', '');
   L.push('（下面是工程細節；轉述給別人只用這一頁）', '');
   return L;
 }

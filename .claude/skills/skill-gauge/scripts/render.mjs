@@ -439,10 +439,13 @@ function secSummary(r) {
   const sm = asObj(r.summary);
   if (!nz(sm.helped)) return null;
   const list = (title, arr) => (asArr(arr).length ? `<h3>${esc(title)}</h3><ul class="keypoints">${asArr(arr).map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '');
+  const wins = asArr(sm.winsPlain ?? sm.wins), losses = asArr(sm.lossesPlain ?? sm.losses);
+  const inline = (title, arr) => (arr.length ? `<p><strong>${esc(title)}：</strong>${arr.map((x) => esc(txt(x))).join('；')}</p>` : '');
   return section('summary', '摘要結論（給人看的一頁）',
     `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>有沒有幫上忙？</strong> ${esc(txt(sm.helped))}</p>
-${list('優點在哪', sm.wins)}${list('缺點在哪／要注意', sm.losses)}${list('這次的限制', sm.limits)}${list('該怎麼改', sm.next)}
-<p class="note">下面是工程細節；轉述給別人只用這一頁。</p>`);
+${nz(sm.needFix) ? `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>需不需要改進？</strong> ${esc(txt(sm.needFix))}</p>` : ''}
+${list('該怎麼改（改哪裡）', sm.next)}${inline('優點在哪', wins)}${inline('缺點在哪／要注意', losses)}${list('這次的限制', sm.limits)}
+<p class="note">優缺點每條有沒有過幾次，在下面「逐條檢查項」那張表；轉述給別人只用這一頁。</p>`);
 }
 
 function secKeyPoints(r, arms, sens) {
