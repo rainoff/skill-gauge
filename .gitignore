@@ -17,3 +17,6 @@ exercises/fixtures/*/gauge/lock.prev-*.json
 # 核可頁（preview）產出的 HTML 不進 repo（跑一次就有，跟 report.html 同類）
 gauge/*/preview.html
 exercises/fixtures/*/gauge/preview.html
+
+# 本機量測資料夾整個不進 repo（08-19 誤以 add -A 加入，已移除；含本機路徑）
+gauge/
