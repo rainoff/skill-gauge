@@ -7,10 +7,10 @@
 ## 怎麼開始（Claude Code）
 
 ```zsh
-git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
+git clone https://github.com/rainoff/skill-gauge.git && cd skill-gauge && claude
 ```
 
-（repo 目前是 private：要先有存取權與 GitHub SSH key；沒有的話請維護者給 zip，解開後在資料夾裡開 `claude` 一樣。）然後對 AI 說一句：**「用 skill-gauge 幫我測量 ○○ skill」**（○○ 是一個含 `SKILL.md` 的資料夾）。接下來會發生四件事：
+（沒有 SSH key 就用 `git clone https://github.com/rainoff/skill-gauge.git`；repo 是公開的。）然後對 AI 說一句：**「用 skill-gauge 幫我測量 ○○ skill」**（○○ 是一個含 `SKILL.md` 的資料夾）。接下來會發生四件事：
 
 1. **它問你六題。** 最重要的一題是「這個 skill 讓你翻車過哪兩次」——題目優先從你真實遇過的事來，不抄別人的；沒翻車過，就改用 skill 自己宣稱會做到的事出題，再來才是這類任務常見的失手（AI 提案、你確認），來源會寫進條件表。
 2. **它出一頁核可頁，然後停下來等你說「可以」。** 頁上有題目、檢查項、這次測量可說明／無法說明什麼、成本估算。你只要看三件事：題目是不是你的翻車、對照組拿到的指令有沒有洩題、可說明／無法說明你同不同意。你說可以，它才鎖住這些輸入——之後改了任何一項，引擎預設拒絕執行（硬要跑得加 `--force`，報告會標記）。
@@ -43,7 +43,7 @@ git clone git@github.com:rainoff/skill-gauge.git && cd skill-gauge && claude
 | **練習一題** | [exercises/01-meeting-notes-skill.md](exercises/01-meeting-notes-skill.md) | 紙上為一個虛構 skill 設計測量，不用執行程式 |
 | **教具** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | 一個十行的會議記錄 skill＋一套能直接執行的 `gauge.json`（含壓力題、16 題觸發題、兩格矩陣）。想先看引擎長什麼樣：`cd` 進去跑 `node ../../../scripts/gauge.mjs all --config gauge/gauge.json --out /tmp/sg-demo --runs 1`；不想花錢，`GAUGE_CLAUDE_CMD="node <repo>/.claude/skills/skill-gauge/scripts/stub-claude.mjs"` 用假模型走一遍看檔案長什麼樣 |
 
-要在別的專案裡用，三種裝法擇一：(a) clone 這個 repo、在裡面開 `claude`（project skill）；(b) 把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）；(c) 當 plugin 裝：`claude plugin marketplace add ./skill-gauge`（本機路徑；08-18 mac 實測過）→ `claude plugin install skill-gauge@skill-gauge`（裝完 `claude plugin details` 列出 Skills (1) skill-gauge，常駐約 380 token）；repo 公開後理論上可用 `claude plugin marketplace add rainoff/skill-gauge`，這條沒實測過。
+要在別的專案裡用，三種裝法擇一：(a) clone 這個 repo、在裡面開 `claude`（project skill）；(b) 把 `.claude/skills/skill-gauge/` 整個資料夾複製到你的 `~/.claude/skills/`（引擎跟著走）；(c) 當 plugin 裝：`claude plugin marketplace add ./skill-gauge`（本機路徑；08-18 mac 實測過）→ `claude plugin install skill-gauge@skill-gauge`（裝完 `claude plugin details` 列出 Skills (1) skill-gauge，常駐約 380 token）；`claude plugin marketplace add rainoff/skill-gauge`（遠端 marketplace 形式）這條還沒實測過。
 
 ## 沒有 Claude Code 的人
 

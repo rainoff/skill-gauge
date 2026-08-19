@@ -434,6 +434,13 @@ export function renderReportHtml(report, opts = {}) {
 }
 
 // 1. 先看這裡
+function nextHtml(sm) {
+  const nk = asObj(sm.nextByKind);
+  if (!nk.question && !nk.skill) return asArr(sm.next).length ? `<h3>該怎麼改</h3><ul class="keypoints">${asArr(sm.next).map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '';
+  const q = asArr(nk.question).map((x) => String(x).replace(/^改題：|^停案或退役：/, '')), s = asArr(nk.skill).map((x) => String(x).replace(/^改 skill(（[^）]*）)?：/, ''));
+  const rest = [...asArr(nk.none), ...asArr(nk.other)];
+  return `<h3>該怎麼改——兩件事分開看</h3><ul class="keypoints"><li><strong>改題目</strong>（測量本身的題目與檢查）：${q.length ? esc(q.join('；')) : '這次沒有'}</li><li><strong>改 skill 本身</strong>：${s.length ? esc(s.join('；')) : '這次沒有要改 skill 的建議'}</li>${rest.map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>`;
+}
 // 0. 摘要結論（給人看的一頁；report.summary 由引擎產生，沒有就不顯示）
 function secSummary(r) {
   const sm = asObj(r.summary);
@@ -444,7 +451,8 @@ function secSummary(r) {
   return section('summary', '摘要結論（給人看的一頁）',
     `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>有沒有幫上忙？</strong> ${esc(txt(sm.helped))}</p>
 ${nz(sm.needFix) ? `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>需不需要改進？</strong> ${esc(txt(sm.needFix))}</p>` : ''}
-${list('該怎麼改（改哪裡）', sm.next)}${inline('優點在哪', wins)}${inline('缺點在哪／要注意', losses)}${list('這次的限制', sm.limits)}
+${nextHtml(sm)}${inline('優點在哪', wins)}${inline('缺點在哪／要注意', losses)}${list('這次的限制', sm.limits)}
+${asArr(sm.askAI).length ? `<p><strong>跟 AI 討論這份報告時，可以這樣問：</strong>${asArr(sm.askAI).map((x) => esc(txt(x))).join(' ')}</p>` : ''}
 <p class="note">優缺點每條有沒有過幾次，在下面「逐條檢查項」那張表；轉述給別人只用這一頁。</p>`);
 }
 
