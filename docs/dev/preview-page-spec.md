@@ -80,7 +80,7 @@ Version: the approval page is an additive patch on v1.1 (the talk, README and sl
 
 Lock: no `lock.json` → `none`; exists and `verifyLock(cfg, lockPath).ok` → `locked` (+ lockedAt, relocks, engineAtLock); exists but mismatch → `mismatch` (+ diffs).
 
-Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay` / `combined`: scan headings (any level); test the not-say pattern first (`/不能說|cannot say|can't say|must not say|not permitted|what we can('t|not) say/i`), then the say pattern (`/(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i`); the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that match **both** (e.g. "可說明／無法說明") → the whole body goes to `combined` with `combinedHeading` = the heading text (rendered under its own heading, never labelled 能說 alone).
+Prereg: read `<gauge dir>/pre-registration.md` if present. `say` / `notSay` / `combined`: scan headings (any level); test the not-say pattern first (`/不能說|cannot say|can't say|must not say|not permitted|what we can('t|not) say/i`), then the say pattern (`/(?<!不)能說|can say|may say|(?<!not )permitted claims|what we can say/i`); the section body runs to the next heading of the same or higher level; keep raw markdown of that body. Headings that match **both** (e.g. "可說明／無法說明") → the whole body goes to `combined` with `combinedHeading` = the heading text (rendered under its own heading, never labelled 能說 alone).（2026-08-19：headings now also match 可說明／可以說明 → say, 無法說明／不可說明／不能說明 → notSay; the old 能說／不能說 forms stay recognised; `combined`／`combinedHeading` are passed through to the page.）
 
 Checks (automated hints — every one must be cheap and deterministic; `ok: null` = not applicable):
 - `prereg-exists` — `pre-registration.md` present.
@@ -113,7 +113,7 @@ Reuse `page`, `section`, `table`, `chip`, `CSS`, `PAGE_JS`. Language of the page
 6. **觸發題** — two lists (該觸發／不該觸發) + runs; note that these only run with `--with-trigger` or `describe`.
 7. **矩陣** — table of cells (only if `matrix`).
 8. **成本估算** — table (執行／評分／已知答案檢查／評分者自證／觸發／矩陣格數／合計) + the `formula` string + one sentence: 「引擎預設先跑不帶 skill 那組，全過就停案，最少只花 M 次」.
-9. **可說明／無法說明** — two `<div class="bar">` blocks with `mdToHtml(say)` / `mdToHtml(notSay)`; if neither found: a warning paragraph 「預先登錄裡找不到標題含『能說』『不能說』的段落——核可前請補上」.
+9. **可說明／無法說明** — two `<div class="bar">` blocks with `mdToHtml(say)` / `mdToHtml(notSay)`; if neither found: a warning paragraph 「預先登錄裡找不到標題含『能說』『不能說』的段落——核可前請補上」.（2026-08-19：the warning text now names 可說明／無法說明.）
 10. **預先登錄全文** — `<details open>` with `mdToHtml(prereg.markdown)`; when the file is missing: warning paragraph（lock 會拒絕，除非 --allow-missing-prereg）.
 11. Footer (always): 「這一頁不是核可對象——核可的是檔案。說『可以』之後執行 lock，鎖的是 gauge.json、pre-registration.md、題目、材料、skill 的雜湊；這一頁改了不算數，檔案改了要重出核可頁、重新核可、--relock。」 plus the standard 「沒有連任何外部資源，可離線開」 line.
 

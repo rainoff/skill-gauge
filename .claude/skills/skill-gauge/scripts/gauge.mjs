@@ -238,7 +238,7 @@ function loadConfig(p) {
     for (const m of c.__materials) if (!fs.existsSync(m)) die(`材料不存在：${m}`);
     const bn = c.__materials.map((m) => path.basename(m)); if (new Set(bn).size !== bn.length) die(`case ${c.id} 的材料檔名重複（沙箱只放檔名，會互相覆蓋）：${bn.join('、')}`);
     c.assertions = c.assertions || cfg.assertions.filter((a) => !a.cases || a.cases.includes(c.id)).map((a) => a.id);
-    // 壓力測試題：規則＋壓力種類＋預期（comply＝該守住／exempt＝該正確不套用）；引擎自動加一條「守住規則」的判斷檢查檢查項
+    // 壓力測試題：規則＋壓力種類＋預期（comply＝該守住／exempt＝該正確不套用）；引擎自動加一條「守住規則」的判斷檢查項
     if (c.type === 'pressure') {
       if (!c.rule) die(`壓力題 ${c.id} 缺 rule（一句話寫 skill 規定什麼）`);
       c.expectedBehavior = c.expectedBehavior || 'comply';
@@ -1381,8 +1381,8 @@ function buildPreview(cfg, opts = {}) {
   if (fs.existsSync(preregPath)) {
     const markdown = fs.readFileSync(preregPath, 'utf8');
     const sn = extractSayNotSay(markdown);
-    prereg = { exists: true, path: preregPath, markdown, say: sn.say, notSay: sn.notSay };
-  } else prereg = { exists: false, path: preregPath, markdown: null, say: null, notSay: null };
+    prereg = { exists: true, path: preregPath, markdown, say: sn.say, notSay: sn.notSay, combined: sn.combined ?? null, combinedHeading: sn.combinedHeading ?? null }; // combined＝合併標題（模板預設寫法）整段；沒傳會被核可頁判成「找不到段落」（08-19 codex 複核抓到）
+  } else prereg = { exists: false, path: preregPath, markdown: null, say: null, notSay: null, combined: null, combinedHeading: null };
   // 核可前自檢（引擎判得了的部分；判不了的五條見核可頁與 SKILL.md）
   const hasFamily = (fam) => cfg.assertions.some((a) => a.family === fam);
   const hasType = (ty) => cfg.cases.some((c) => c.type === ty);
@@ -1488,7 +1488,7 @@ async function main() {
   if (cmd === 'lock') {
     const lp = path.join(cfg.__dir, 'lock.json');
     if (fs.existsSync(lp) && !args.relock) die(`已經有 lock.json（${readJSON(lp).lockedAt}）。鎖定不可靜默覆寫：要改題就重新核可後加 --relock（會保留舊鎖到 lock.prev-<時間>.json，報告會顯示重鎖次數）。`);
-    if (!fs.existsSync(path.join(cfg.__dir, 'pre-registration.md')) && !args['allow-missing-prereg']) die('gauge 目錄沒有 pre-registration.md：預先登錄是流程的一部分（能說／不能說要先寫死）。真的只是教具或煙霧測試，加 --allow-missing-prereg。');
+    if (!fs.existsSync(path.join(cfg.__dir, 'pre-registration.md')) && !args['allow-missing-prereg']) die('gauge 目錄沒有 pre-registration.md：預先登錄是流程的一部分（可說明／無法說明要先寫死）。真的只是教具或煙霧測試，加 --allow-missing-prereg。');
     let relocks = 0;
     if (fs.existsSync(lp)) { const prev = readJSON(lp); relocks = (prev.relocks || 0) + 1; fs.copyFileSync(lp, path.join(cfg.__dir, `lock.prev-${nowStamp()}.json`)); }
     const lock = { ...lockInputs(cfg), relocks, engine: ENGINE_VERSION };

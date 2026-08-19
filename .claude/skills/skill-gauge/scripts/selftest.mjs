@@ -150,6 +150,11 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   { const bo = buildPreview({ ...fakeCfg, __baselineOnly: true, skill: { name: null, path: null, __abs: null }, arms: [{ name: 'with', skill: true }, { name: 'without', skill: false }], matrix: null, trigger: null }, { gaugeDir: '/nonexistent-sg-preview-dir' }); t('buildPreview：baseline-only 只列基準組、成本只算一組', bo.arms.length === 1 && bo.arms[0].kind === 'none' && bo.cost.arms === 1 && bo.cost.executions === 10 && bo.cost.isolationChecks === 2); }
   t('buildPreview：沒有 lock.json → lock.state=none', pv.lock.state === 'none');
   t('buildPreview：沒有 pre-registration.md → prereg.exists=false', pv.prereg.exists === false);
+  { // 合併標題（模板預設寫法）必須一路傳到核可頁：extractSayNotSay 抓到 combined 後，buildPreview 不能只帶 say／notSay（08-19 codex 複核抓到的回歸）
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-prev-')); fs.writeFileSync(path.join(tmp, 'pre-registration.md'), '# X\n\n## 這次測量可說明／無法說明什麼（先寫死）\n- 可說明 A\n- 無法說明 B\n\n## 執行規則\n1. x\n');
+    const pc = buildPreview(fakeCfg, { gaugeDir: tmp });
+    t('buildPreview：合併標題的可說明／無法說明段落有帶到 prereg.combined，且自檢 say-notsay-found=ok', pc.prereg.combined != null && /可說明 A/.test(pc.prereg.combined) && pc.checks.find((c) => c.id === 'say-notsay-found')?.ok === true);
+    fs.rmSync(tmp, { recursive: true, force: true }); }
   t('buildPreview：checks 含 prereg-exists 且 ok=false', pv.checks.find((c) => c.id === 'prereg-exists')?.ok === false);
 }
 
@@ -163,10 +168,10 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   const sm = plainSummary(rep); const md = summaryMarkdown(sm).join('\n');
   t('摘要：主句數字對、等級「有差」（3/12＝25%）', /12 格裡過 10 格，不帶的過 7 格——多 3 格；翻 4 格就反過來/.test(sm.helped) && /有差/.test(sm.helped) && sm.verdict === 'better');
   t('摘要：不出現任何檢查項 id 或組名代號', !/judgment-01|fact-x|j-y|o-z|\bwith\b|\bwithout\b/.test(md));
-  t('摘要：贏在哪用 label／首子句（數字沒改；保留兩層結論不算贏）', sm.wins.length === 1 && /數字沒改：不帶 3 次裡 2 次沒過，帶 skill 全過/.test(sm.wins[0]));
-  t('摘要：輸在哪含帶 skill 反而差、兩組全沒過、誤觸發、一句提醒那組', sm.losses.some((x) => /保留兩層結論.*帶 skill 反而 3 次裡 1 次沒過/.test(x)) && sm.losses.some((x) => /技術名詞與檔名／測試名：帶不帶都 3 次全沒過/.test(x)) && sm.losses.some((x) => /不該出手的題目 6 次裡 2 次/.test(x)) && sm.losses.some((x) => /只給一句提醒那組過 6 格，比不帶還差——skill 的內容比一句提醒多 4 格/.test(x)));
+  t('摘要：優點在哪用 label／首子句（數字沒改；保留兩層結論不算贏）', sm.wins.length === 1 && /數字沒改：不帶 3 次裡 2 次沒過，帶 skill 全過/.test(sm.wins[0]));
+  t('摘要：缺點在哪含帶 skill 反而差、兩組全沒過、誤觸發、一句提醒那組', sm.losses.some((x) => /保留兩層結論.*帶 skill 反而 3 次裡 1 次沒過/.test(x)) && sm.losses.some((x) => /技術名詞與檔名／測試名：帶不帶都 3 次全沒過/.test(x)) && sm.losses.some((x) => /不該出手的題目 6 次裡 2 次/.test(x)) && sm.losses.some((x) => /只給一句提醒那組過 6 格，比不帶還差——skill 的內容比一句提醒多 4 格/.test(x)));
   t('摘要：限制含題數次數模型、零鑑別條數、翻幾格', sm.limits.some((x) => /只有 2 題、每題 3 次/.test(x)) && sm.limits.some((x) => /2 條檢查兩組都全過/.test(x)) && sm.limits.some((x) => /翻 4 格就反轉/.test(x)));
-  t('摘要：下一步是人話版改題', sm.next.length === 1 && /^改題：/.test(sm.next[0]) && !/`/.test(sm.next[0]));
+  t('摘要：該怎麼改是人話版改題', sm.next.length === 1 && /^改題：/.test(sm.next[0]) && !/`/.test(sm.next[0]));
   const stop = plainSummary({ ...rep, baseline: { arm: 'without', verdict: 'STOP' }, totals: { without: { pass: 12, total: 12 } } });
   t('摘要：停案句', stop.verdict === 'stop' && /測不出 skill 的貢獻/.test(stop.helped));
   t('assertionLabel：label 優先；沒有就取首子句、超長截在頓號', assertionLabel({ label: 'L', text: 'T' }) === 'L' && assertionLabel({ text: '技術名詞與檔名／測試名（`fixture`）仍出現' }) === '技術名詞與檔名／測試名' && /…$/.test(assertionLabel({ text: '抽象英文詞 hypothesis、falsified、root cause、state leakage、measure、next action 沒有原文照抄' })));
