@@ -230,7 +230,12 @@ function loadConfig(p) {
   cfg.executorEffort = cfg.executorEffort || null;
   if (cfg.executorEffort && !EFFORT_LEVELS.includes(cfg.executorEffort)) die(`executorEffort 必須是 ${EFFORT_LEVELS.join('/')}`);
   cfg.arms = cfg.arms || [{ name: 'with', skill: true }, { name: 'without', skill: false }];
-  for (const arm of cfg.arms) if (arm.skillPath) arm.__abs = path.resolve(cfg.__dir, arm.skillPath);
+  // arms 契約（08-19 codex 複核）：報告把第一組當「帶 skill」、第二組當「不帶 skill」，順序寫錯整份報告會反過來，所以載入時就擋
+  if (!Array.isArray(cfg.arms) || cfg.arms.length < 2) die('arms 至少兩組：第一組帶 skill（受測，skill: true）、第二組不帶（對照，skill: false）');
+  if (cfg.arms[0].skill !== true || cfg.arms[0].skillPath) die(`arms[0]（${cfg.arms[0].name}）必須是受測組：skill: true、不填 skillPath——報告以第一組當「帶 skill」`);
+  if (cfg.arms[1].skill === true || cfg.arms[1].skillPath) die(`arms[1]（${cfg.arms[1].name}）必須是對照組：skill: false、不填 skillPath——報告以第二組當「不帶 skill」`);
+  if (new Set(cfg.arms.map((a) => a.name)).size !== cfg.arms.length) die('arms 的 name 不可重複');
+  for (const arm of cfg.arms) if (arm.skillPath) { arm.__abs = path.resolve(cfg.__dir, arm.skillPath); if (!fs.existsSync(path.join(arm.__abs, 'SKILL.md'))) die(`第三組 ${arm.name} 的 skillPath 找不到 SKILL.md：${arm.__abs}（相對 gauge.json 所在目錄解析）`); }
   for (const c of cfg.cases) {
     if (!c.id || !c.promptFile) die(`case 缺 id 或 promptFile：${JSON.stringify(c)}`);
     c.__prompt = fs.readFileSync(path.resolve(cfg.__dir, c.promptFile), 'utf8');
@@ -595,10 +600,11 @@ function baselineVerdict(cfg, outDir) {
   // 停案只准在「基準組資料完整」時判：每題都有 runs 次有效 run、沒有作廢、沒有失敗——缺一次就不准說「每次都過」
   const expected = cfg.cases.length * cfg.runs;
   const complete = invalid === 0 && failures === 0 && validRuns >= expected;
-  const verdict = validRuns === 0 ? 'NO-DATA' : allPass ? (complete ? 'STOP' : 'INCOMPLETE') : 'CONTINUE';
+  const scoredCells = Object.values(per).reduce((s, x) => s + x.total, 0);
+  const verdict = validRuns === 0 || scoredCells === 0 ? 'NO-DATA' : allPass ? (complete ? 'STOP' : 'INCOMPLETE') : 'CONTINUE';
   return { arm: base.name, validRuns, invalidRuns: invalid, harnessFailures: failures, expectedRuns: expected, complete, perAssertion: per, allPass: validRuns > 0 && allPass, weakAssertions: weak,
     verdict,
-    note: verdict === 'NO-DATA' ? '基準組沒有有效 run（作廢或失敗），先補跑' : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，作廢 ${invalid}、失敗 ${failures}）——不准據此停案，先補跑缺的 run` : allPass
+    note: verdict === 'NO-DATA' ? (validRuns === 0 ? '基準組沒有有效 run（作廢或失敗），先補跑' : '基準組有 run 但沒有任何計分檢查（事實／判斷）被判定——不能據此停案；檢查 assertions 的 family 與 cases 對應') : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，作廢 ${invalid}、失敗 ${failures}）——不准據此停案，先補跑缺的 run` : allPass
       ? '基準組（不帶 skill）每條計分檢查每次都過：這組題／這把尺測不出 skill 的貢獻——要嘛模型本來就會、要嘛題目太鬆。改題或停案，不要靠多跑幾次。'
       : cfg.__baselineOnly ? `不帶 skill 的模型在 ${weak.length} 條檢查上沒全過（${weak.join('、')}）——這幾條就是 skill 值得補的地方；寫了 skill 之後補上 skill.path，再量帶 skill 那組。`
       : `基準組在 ${weak.length} 條檢查上沒全過，帶 skill 那組有空間顯出差別；繼續跑。` };
@@ -777,6 +783,10 @@ function buildReport(cfg, outDir) {
   if (fs.existsSync(gsc)) report.graderSelfCheck = readJSON(gsc);
   const lock = path.join(cfg.__dir, 'lock.json');
   report.lock = fs.existsSync(lock) ? verifyLock(cfg, lock) : { ok: false, reason: '無 lock.json' };
+  if (report.lock.engineAtLock && report.lock.engineAtLock !== ENGINE_VERSION) report.flags.push(`引擎版本與鎖定時不同：鎖定時 ${report.lock.engineAtLock}、現在 ${ENGINE_VERSION}——評分提示或計分邏輯可能已變，跨版本比較要小心`);
+  { const effP = path.join(outDir, 'effective.json'); const effR = fs.existsSync(effP) ? readJSON(effP) : null;
+    let lockedRuns = null; try { lockedRuns = Number(readJSON(path.join(cfg.__dir, 'gauge.json')).runs || 3); } catch { lockedRuns = null; }
+    if (effR && effR.runs != null && lockedRuns != null && Number(effR.runs) !== lockedRuns) report.flags.push(`次數與核可不同：gauge.json 寫 ${lockedRuns} 次、實際執行 ${effR.runs} 次（--runs 覆寫）——試跑口徑，不當正式結論`); }
   report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下', process.env.GAUGE_ENV_PASSTHROUGH === '1' ? '⚠ 環境變數整份放行（GAUGE_ENV_PASSTHROUGH=1）' : '環境變數白名單'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
   if (cfg.__matrixCell) report.matrixCell = cfg.__matrixCell;
   report.summary = plainSummary(report);
@@ -1527,6 +1537,9 @@ async function main() {
   if (!fs.existsSync(path.join(outDir, 'gauge.json'))) fs.copyFileSync(cfg.__file, path.join(outDir, 'gauge.json'));
   const runs = Number(args.runs || cfg.runs);
   const parallel = Number(args.parallel || 1);
+  if (args.runs !== undefined && (!Number.isInteger(runs) || runs < 1)) die(`--runs 必須是 ≥1 的整數，收到：${args.runs}`);
+  if (!Number.isInteger(parallel) || parallel < 1) die(`--parallel 必須是 ≥1 的整數，收到：${args.parallel}`);
+  if (args.runs !== undefined && runs !== cfg.runs) log(`⚠ --runs ${runs} 跟核可頁寫死的 ${cfg.runs} 不同：這是試跑口徑，報告會標記，不當正式結論`);
   const judgeModel = args['judge-model'] || cfg.judgeModel;
   if (args['judge-model']) cfg.judgeModel = args['judge-model']; // 報告與 history 記實際生效的評分模型
   if (args.runs) cfg.runs = runs;
