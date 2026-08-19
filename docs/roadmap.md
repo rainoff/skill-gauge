@@ -94,5 +94,5 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 模板要求「先 commit」與 SKILL 用 lock 矛盾；gate 放格式的說法前後矛盾；results 模板 §1–§6 全填 vs SKILL 第 5 步只填部分
 - 已知答案檢查是固定題（全域規則對回應語言的要求＋skill 名），不是使用者自選；INCONCLUSIVE 仍 iso.ok=true 繼續
 - Windows 引擎實跑：待 testing.md 有紀錄才可寫「通用」；CI 只有 Ubuntu
-- 轉 public 前：docs/reviews/ 內 153 處 `~` 路徑要脫敏；.gitignore 只排 `gauge/*/runs/`
+- 轉 public 前：docs/reviews/ 內本機絕對路徑要脫敏（08-19 16:26 已做，改寫成 <repo>/、~/）；gauge/ 整個已移出版控
 
