@@ -83,7 +83,7 @@ node <SKILL_DIR>/scripts/gauge.mjs lock --config gauge/<dir>/gauge.json
   ```
   node <SKILL_DIR>/scripts/gauge.mjs all --config gauge/<dir>/gauge.json --out gauge/<dir>/runs/<YYYYMMDD-HHMM> [--with-trigger]
   ```
-  **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。基準組資料不完整（有 run 沒過前置檢查，或有前置作廢／失敗）時引擎判 INCOMPLETE、不准停案，先補跑。停案時壓力題與負向對照題的帶 skill 組**仍會跑**（安全探針）：停案說的是「skill 幫不上忙」，不代表它不會幫倒忙（拒答、硬套、誤觸發）。**代價要說**：先跑基準組、再跑帶 skill 組，兩組不同時段——服務更新或負載變化會混進差距；要嚴格對照就 `--interleave`（兩組交錯、不先停案），錢多花一半。
+  **停案規則**（skill-forge 的「先確認不帶 skill 真的過不了」，這裡是量測前段）：不帶 skill 那組每條計分檢查每次都過 → 引擎停、不跑帶 skill 那組、報告寫 STOP——意思是這組題／這把尺測不出 skill 的貢獻：要嘛模型本來就會、要嘛題目太鬆。這時你的工作是跟使用者一起**改題**（更貼近真實翻車、更刁）或**停案**（skill 對這個模型沒必要），不是多跑幾次、也不是加 `--ignore-stop-rule` 硬跑。基準組資料不完整時引擎判 INCOMPLETE、不准停案：有前置作廢或失敗要先補跑；沒過前置檢查（gate-false）的 run 是有效但未成功的結果，不必補跑，但一樣不算「每次都過」——要嘛改題讓它過、要嘛就別停案。停案時壓力題與負向對照題的帶 skill 組**仍會跑**（安全探針）：停案說的是「skill 幫不上忙」，不代表它不會幫倒忙（拒答、硬套、誤觸發）。**代價要說**：先跑基準組、再跑帶 skill 組，兩組不同時段——服務更新或負載變化會混進差距；要嚴格對照就 `--interleave`（兩組交錯、不先停案），錢多花一半。
   Windows 加 `--root D:\sg`（系統暫存目錄在使用者目錄底下，引擎會拒絕）。分段跑用 `run` / `grade` / `report`；已跑過的 run 不重跑（可續跑），要補跑就刪掉該 run 目錄再跑；`--interleave` 改回兩組交錯、不先跑基準組。**不可用 subagent 代替引擎跑兩組**——subagent 繼承你的環境，不是隔離。
 - **換模型或 effort 再量（矩陣）**：gauge.json 填 `matrix`（或 `--models a,b --efforts low,high`），一行跑完每一格（每格＝一次完整量測，含停案規則）：
   ```

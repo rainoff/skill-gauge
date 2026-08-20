@@ -604,9 +604,18 @@ function baselineVerdict(cfg, outDir) {
   const complete = invalid === 0 && failures === 0 && validRuns >= expected;
   const scoredCells = Object.values(per).reduce((s, x) => s + x.total, 0);
   const verdict = validRuns === 0 || scoredCells === 0 ? 'NO-DATA' : allPass ? (complete ? 'STOP' : 'INCOMPLETE') : 'CONTINUE';
+  // validRuns===0 時的說法要把「先補跑」限定在 harness failure（前置作廢／失敗）——沒過前置檢查（gate-false）
+  // 是有效但未成功的結果，不是作廢，不必補跑（v1.5-5）。
+  const noValidRunsNote = failures > 0 && invalid > 0
+    ? `基準組沒有有效 run——前置作廢或失敗 ${failures} 次，先補跑；另有 ${invalid} 次沒過前置檢查（有效但未成功），詳見決策摘要`
+    : failures > 0
+    ? `基準組沒有有效 run（前置作廢或失敗 ${failures} 次），先補跑`
+    : invalid > 0
+    ? `基準組沒有有效 run——${invalid} 次都沒過前置檢查（有效但未成功），詳見決策摘要`
+    : '基準組沒有任何 run（目錄不存在或還沒開始跑），先補跑';
   return { arm: base.name, validRuns, invalidRuns: invalid, harnessFailures: failures, expectedRuns: expected, complete, perAssertion: per, allPass: validRuns > 0 && allPass, weakAssertions: weak,
     verdict,
-    note: verdict === 'NO-DATA' ? (validRuns === 0 ? '基準組沒有有效 run（整組沒過前置檢查，或前置作廢／失敗），先補跑' : '基準組有 run 但沒有任何計分檢查（事實／判斷）被判定——不能據此停案；檢查 assertions 的 family 與 cases 對應') : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，沒過前置檢查 ${invalid}、前置作廢或失敗 ${failures}）——不准據此停案，先補跑缺的 run` : allPass
+    note: verdict === 'NO-DATA' ? (validRuns === 0 ? noValidRunsNote : '基準組有 run 但沒有任何計分檢查（事實／判斷）被判定——不能據此停案；檢查 assertions 的 family 與 cases 對應') : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，沒過前置檢查 ${invalid}、前置作廢或失敗 ${failures}）——不准據此停案，先補跑缺的 run` : allPass
       ? '基準組（不帶 skill）每條計分檢查每次都過：這組題／這把尺測不出 skill 的貢獻——要嘛模型本來就會、要嘛題目太鬆。改題或停案，不要靠多跑幾次。能力上不需要；效率價值未判——要判，加跑完整兩臂成本比較。'
       : cfg.__baselineOnly ? `不帶 skill 的模型在 ${weak.length} 條檢查上沒全過（${weak.join('、')}）——這幾條就是 skill 值得補的地方；寫了 skill 之後補上 skill.path，再量帶 skill 那組。`
       : `基準組在 ${weak.length} 條檢查上沒全過，帶 skill 那組有空間顯出差別；繼續跑。` };
@@ -647,10 +656,12 @@ function deriveCostMetrics({ totalCostUsd, successRuns, notFirstPassRuns, passed
 }
 
 // 美元位數自適應：預設 3 位；同一組要比較的值在目前位數下顯示相同（但實際不同，含都顯示成 0）就加位數，直到能分辨或到位數上限。
+// distinct 用原值嚴格不等（Set 對 number 是 SameValueZero，不經 toFixed(10) 正規化）——toFixed(10) 會把
+// 1.00000000001 與 1.00000000002 這種十位以後才不同的值合併成同一個 key，讓後面的碰撞偵測整個失效（v1.5-3）。
 function usdDigits(vals, { min = 3, max = 6 } = {}) {
   const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
   if (nums.length < 2) return min;
-  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  const distinct = new Set(nums).size;
   for (let d = min; d < max; d++) { if (new Set(nums.map((v) => v.toFixed(d))).size >= distinct) return d; }
   return max;
 }
@@ -671,7 +682,7 @@ function fmtUsd(x, digits = 3, { raw = false } = {}) {
 function usdFmt(vals, opts = {}) {
   const digits = usdDigits(vals, opts);
   const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
-  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  const distinct = new Set(nums).size; // 原值嚴格不等，理由同 usdDigits（v1.5-3）
   const collides = new Set(nums.map((v) => v.toFixed(digits))).size < distinct;
   const f = (x) => fmtUsd(x, digits, { raw: collides });
   f.digits = digits; f.collides = collides;
@@ -807,11 +818,15 @@ function buildReport(cfg, outDir) {
         // 不再併進「前置作廢」——它是正常結果，只有 harness 失敗才是作廢。
         { const cls = classifyScenario(kase.assertions || [], g.verdicts);
           bumpCostClass(arm.name, cls); scenarioClassOf(perCase[kase.id][arm.name])[cls]++; }
-        // 環節效益表的逐檢查項計數（四個 family 都算，含 gate 明確 false 的 run；不進 totals、不影響計分）
+        // 環節效益表的逐檢查項計數（四個 family 都算，含 gate 明確 false 的 run；不進 totals、不影響計分）。
+        // nullKeys＝稀疏補記：只記下判定回 null 或缺判定的 case×run（不是每個判定都記，四 family 的量體比計分 family 大很多，
+        // 全記會讓報告膨脹）——讓 comparabilityIssue 抓得到「兩臂 null 計數相同、但是不同 case×run 的 null」這種漏網（v1.5-2）。
         for (const id of kase.assertions || []) {
           const v = (g.verdicts || []).find((x) => x.id === id);
-          const px = ((perExpectation[id] ||= {})[arm.name] ||= { pass: 0, fail: 0, nulls: 0, total: 0 });
-          px.total++; if (!v || v.pass == null) px.nulls++; else if (v.pass) px.pass++; else px.fail++;
+          const px = ((perExpectation[id] ||= {})[arm.name] ||= { pass: 0, fail: 0, nulls: 0, total: 0, nullKeys: [] });
+          px.total++;
+          if (!v || v.pass == null) { px.nulls++; px.nullKeys.push(`${kase.id}/${rk}`); }
+          else if (v.pass) px.pass++; else px.fail++;
         }
         if (g.gateFailed) { invalid.push(`${kase.id}/${arm.name}/${rk}`); perCase[kase.id][arm.name].invalidRuns++; continue; }
         perCase[kase.id][arm.name].validRuns++;
@@ -943,10 +958,16 @@ function buildReport(cfg, outDir) {
       if (ja < BENEFIT_THIN_RUNS || jb < BENEFIT_THIN_RUNS) thin = true;
       const rateA = a.pass / ja, rateB = b.pass / jb;
       const kind = benefitKind({ passWith: a.pass, judgedWith: ja, passWithout: b.pass, judgedWithout: jb });
+      // 母體不等（ja !== jb）時，這一格改用比率差＋1/max(N) 門檻（保守，不硬減次數）——不同分母下 raw 次數差會高估證據，
+      // 所以這一格的分類跟「同母體、差 ≥1 次」不是同一把尺。這裡不改判法（v1.4-2 的門檻只適用同母體），只在輸出上把
+      // 母體不等的事實標出來，讀表的人才知道這一格的「差」是比率差不是次數差（v1.5-1）。
+      const populationMismatch = ja !== jb;
+      const populationMismatchLabel = populationMismatch ? `母體不等（${a.pass}/${ja} vs ${b.pass}/${jb}）` : null;
       rows.push({ id, family: famOf[id], label: labelOf[id] || assertionLabel({ label: labelOf[id], text: textOf[id] }), text: textOf[id],
         with: { pass: a.pass, judged: ja, nulls: a.nulls, rate: +rateA.toFixed(3) },
         without: { pass: b.pass, judged: jb, nulls: b.nulls, rate: +rateB.toFixed(3) },
-        diff: +(rateA - rateB).toFixed(3), diffRuns: ja === jb ? a.pass - b.pass : null, kind, kindZh: BENEFIT_KIND_ZH[kind] });
+        diff: +(rateA - rateB).toFixed(3), diffRuns: ja === jb ? a.pass - b.pass : null, kind, kindZh: BENEFIT_KIND_ZH[kind],
+        populationMismatch, populationMismatchLabel });
     }
     const order = { negative: 0, bothLow: 1, bothHigh: 2, middling: 3, positive: 4 };
     rows.sort((x, y) => (order[x.kind] - order[y.kind]) || (x.diff - y.diff) || x.id.localeCompare(y.id));
@@ -1092,7 +1113,16 @@ function plainSummary(r) {
   const zero = (r.flags || []).filter((f) => f.startsWith('零鑑別')).length;
   if (zero) out.limits.push(`${zero} 條檢查兩組都全過：題目對這個模型太簡單，測不出差別`);
   if (tA && tB && tA.total === tB.total && tA.pass !== tB.pass) out.limits.push(`翻 ${Math.abs(tA.pass - tB.pass) + 1} 格就反轉，不要當定論`);
-  if ((r.invalidRuns || []).length || (r.harnessFailures || []).length) out.limits.push(`有 ${(r.invalidRuns || []).length} 次沒過前置檢查（有效但未成功，不進計分）、${(r.harnessFailures || []).length} 次執行／評分失敗（前置作廢，要補跑），數字還不完整`);
+  // 「先補跑」只指 harness failure；沒過前置檢查（gate-false）是有效但未成功的結果，不必補跑，也不叫「數字還不完整」（v1.5-5）。
+  {
+    const invN = (r.invalidRuns || []).length, hfN = (r.harnessFailures || []).length;
+    if (invN || hfN) {
+      const parts = [];
+      if (invN) parts.push(`${invN} 次沒過前置檢查（有效但未成功，不進計分），詳見決策摘要`);
+      if (hfN) parts.push(`${hfN} 次執行／評分失敗（前置作廢，要補跑）`);
+      out.limits.push(`有 ${parts.join('、')}`);
+    }
+  }
   if ((r.flags || []).some((f) => f.startsWith('同格'))) out.limits.push('同一題重複跑的結果幾乎一樣，有效樣本比次數少');
   // 4. 該怎麼改（人話版）
   const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實翻車、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看沒過前置檢查的', '先看沒過前置檢查的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
@@ -1231,6 +1261,17 @@ function comparabilityIssue(r, A, B) {
     // 數量相同也可能不是同一批 run（A 在 r1 沒過前置檢查、B 在 r2 沒過）——逐 case×run key 比對才抓得到（v1.4-4）
     const ka = [...(a.keys || [])].sort(), kb = [...(b.keys || [])].sort();
     if (a.keys && b.keys && (ka.length !== kb.length || ka.some((x, i) => x !== kb[i]))) return `逐條檢查項的判定不是同一批 run（${id}：${A} ${ka.join('、') || '無'}、${B} ${kb.join('、') || '無'}）`;
+  }
+  // 四 family（含 gate／orientation）的 null 位置比對：只在兩臂 null 計數相同時才有意義（計數不同時上層 dataBlockingIssue
+  // 已經先擋掉）；計數相同但 null 落在不同 case×run 上，代表兩臂看起來一樣可比、實際不是同一批資料在算同一件事（v1.5-2）。
+  for (const [id, entry] of Object.entries(r.expectations || {})) {
+    const byArm = entry?.arms || {};
+    const a = byArm[A], b = byArm[B];
+    if (!a || !b) continue;
+    if ((a.nulls || 0) > 0 && (b.nulls || 0) > 0 && a.nulls === b.nulls) {
+      const ka = [...(a.nullKeys || [])].sort(), kb = [...(b.nullKeys || [])].sort();
+      if (a.nullKeys && b.nullKeys && (ka.length === kb.length && ka.some((x, i) => x !== kb[i]))) return `四類檢查項判定回 null 的位置不同（${id}：${A} ${ka.join('、') || '無'}、${B} ${kb.join('、') || '無'}）——計數相同但不是同一批 run`;
+    }
   }
   return null;
 }
@@ -1483,7 +1524,7 @@ function reportMarkdown(cfg, r) {
   for (const [id, x] of Object.entries(r.assertions)) L.push(`| ${id}：${x.text} | ${x.family} | ${arms.map((a) => (x.arms[a] ? `${x.arms[a].pass}/${x.arms[a].total}` : '—')).join(' | ')} |`);
   if (r.benefit?.rows?.length) {
     L.push('', '## 環節效益表（哪個環節幫上忙、哪個環節幫倒忙）', '', `| 檢查項 | 類 | 帶 skill | 不帶 | 差 | 判讀 |`, `|---|---|---|---|---|---|`);
-    for (const b of r.benefit.rows) L.push(`| ${b.label} | ${b.family} | ${b.with.pass}/${b.with.judged}（${Math.round(b.with.rate * 100)}%） | ${b.without.pass}/${b.without.judged}（${Math.round(b.without.rate * 100)}%） | ${b.diff > 0 ? '+' : ''}${Math.round(b.diff * 100)}% | ${b.kindZh} |`);
+    for (const b of r.benefit.rows) L.push(`| ${b.label} | ${b.family} | ${b.with.pass}/${b.with.judged}（${Math.round(b.with.rate * 100)}%） | ${b.without.pass}/${b.without.judged}（${Math.round(b.without.rate * 100)}%） | ${b.diff > 0 ? '+' : ''}${Math.round(b.diff * 100)}% | ${b.kindZh}${b.populationMismatch ? `　${b.populationMismatchLabel}` : ''} |`);
     L.push('', `- 分類先看有沒有實質差（通過次數差 ≥1 次），沒有實質差才看水準。`, `- 負效益（帶 skill 反而差）＝幫倒忙的具體位置，改 skill 時最優先。`, `- 正效益＝帶 skill 明顯多過，值得延伸的地方。`, `- 兩邊都低＝出題問題或能力缺口，先改題目。`, `- 兩邊都高＝這個環節 skill 沒貢獻；如果它是主賣點，就是「沒用」的警訊。`, `- 中段（沒有實質差）＝兩組差不多，也看不出水準特別高或低。`, `- ${r.benefit.note}${r.benefit.thresholds ? ' 分類門檻：' + r.benefit.thresholds.note : ''}`);
     if (r.benefit.skipped) L.push(`- 另有 ${r.benefit.skipped} 條檢查項因為有一組沒有明確判定，沒進這張表。`);
   }
@@ -2161,5 +2202,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue };
+export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue, baselineVerdict };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));

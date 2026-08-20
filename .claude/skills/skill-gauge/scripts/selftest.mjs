@@ -4,7 +4,7 @@ process.env.GAUGE_NO_MAIN = '1';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict } = await import('./gauge.mjs');
+const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict, comparabilityIssue, baselineVerdict } = await import('./gauge.mjs');
 let n = 0, bad = 0; const t = (name, cond) => { n++; if (!cond) { bad++; console.log('✗', name); } else console.log('✓', name); };
 
 // 祖先掃描：有 .claude 的上層要被抓到，自己這層不算
@@ -359,6 +359,18 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   t('摘要：優點在哪用 label／首子句（數字沒改；保留兩層結論不算贏）', sm.wins.length === 1 && /數字沒改：不帶 3 次裡 2 次沒過，帶 skill 全過/.test(sm.wins[0]));
   t('摘要：缺點在哪含帶 skill 反而差、兩組全沒過、誤觸發、一句提醒那組', sm.losses.some((x) => /保留兩層結論.*帶 skill 反而 3 次裡 1 次沒過/.test(x)) && sm.losses.some((x) => /技術名詞與檔名／測試名：帶不帶都 3 次全沒過/.test(x)) && sm.losses.some((x) => /不該出手的題目 6 次裡 2 次/.test(x)) && sm.losses.some((x) => /只給一句提醒那組過 6 格，比不帶還差——skill 的內容比一句提醒多 4 格/.test(x)));
   t('摘要：限制含題數次數模型、零鑑別條數、翻幾格', sm.limits.some((x) => /只有 2 題、每題 3 次/.test(x)) && sm.limits.some((x) => /2 條檢查兩組都全過/.test(x)) && sm.limits.some((x) => /翻 4 格就反轉/.test(x)));
+  // v1.5-5：限制句裡「先補跑」只指 harness failure；gate-false（沒過前置檢查）不必補跑，也不叫「數字還不完整」
+  {
+    const limGate = plainSummary({ ...rep, invalidRuns: ['c1/with/r1', 'c1/with/r2'], harnessFailures: [] });
+    t('v1.5-5：只有 gate-false 時限制句講「有效但未成功／詳見決策摘要」，不出現「先補跑」或「數字還不完整」',
+      limGate.limits.some((x) => /2 次沒過前置檢查（有效但未成功，不進計分），詳見決策摘要/.test(x)) && !limGate.limits.some((x) => /先補跑|數字還不完整/.test(x)));
+    const limHf = plainSummary({ ...rep, invalidRuns: [], harnessFailures: ['c1/with/r1'] });
+    t('v1.5-5：只有 harness failure 時限制句講「先補跑」，不出現「有效但未成功」或「數字還不完整」',
+      limHf.limits.some((x) => /1 次執行／評分失敗（前置作廢，要補跑）/.test(x)) && !limHf.limits.some((x) => /有效但未成功|數字還不完整/.test(x)));
+    const limBoth = plainSummary({ ...rep, invalidRuns: ['c1/with/r1'], harnessFailures: ['c1/with/r2'] });
+    t('v1.5-5：兩者都有時限制句分開講兩種措辭，且不出現「數字還不完整」',
+      limBoth.limits.some((x) => /1 次沒過前置檢查（有效但未成功，不進計分），詳見決策摘要、1 次執行／評分失敗（前置作廢，要補跑）/.test(x)) && !limBoth.limits.some((x) => /數字還不完整/.test(x)));
+  }
   t('摘要：該怎麼改是人話版改題', sm.next.length === 1 && /^改題：/.test(sm.next[0]) && !/`/.test(sm.next[0]));
   const stop = plainSummary({ ...rep, baseline: { arm: 'without', verdict: 'STOP' }, totals: { without: { pass: 12, total: 12 } } });
   t('摘要：停案句', stop.verdict === 'stop' && /測不出 skill 的貢獻/.test(stop.helped));
@@ -656,6 +668,31 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
     t('A3 環節效益表：每格判定數 <3 時整表掛「當線索，不當定論」', repThin.benefit.thin === true && /當線索，不當定論/.test(repThin.benefit.note));
   }
 
+  // --- v1.5-1：母體不等的環節效益必標「母體不等」，且維持比率差＋1/max(N) 門檻（不改判法，只補標記）---
+  // 手推（第四輪複核 R4 反例）：帶 5/10（.5）vs 不帶 4/9（.444）→ 母體不等，改比率差：|.5-.444|=.056 < 1/10=.1 門檻 → 不算實質差
+  //   → 沒有實質差才看水準：.5／.444 都不 ≤1/3 也不 ≥2/3 → middling（codex 依 v1.4 原文的「次數差 +1＝positive」是誤判：
+  //   母體不等時不用次數差，這裡明確鎖住「改規格不改回歸」的立場，並要求該格輸出母體不等標記）。
+  {
+    const cfgR4 = { name: 'fx-benefit-r4', runs: 10, arms: twoArms,
+      assertions: [{ id: 'o-r4', family: 'orientation', text: 'orient r4', label: '情境 r4' }],
+      cases: [{ id: 'c1', assertions: ['o-r4'] }] };
+    const withRuns = [true, true, true, true, true, false, false, false, false, false].map((p) => [[V('o-r4', p)]]);
+    const withoutRuns = [true, true, true, true, false, false, false, false, false].map((p) => [[V('o-r4', p)]]);
+    const repR4 = buildFixture('benefit-r4', cfgR4, { c1: { with: withRuns, without: withoutRuns } });
+    const row = repR4.benefit.rows.find((x) => x.id === 'o-r4');
+    t('v1.5-1：母體不等 5/10 vs 4/9 判 middling（比率差 0.056 < 1/10 門檻，不是次數差 +1 的 positive）', row.kind === 'middling' && row.with.pass === 5 && row.with.judged === 10 && row.without.pass === 4 && row.without.judged === 9);
+    t('v1.5-1：該格標母體不等，附上原始 a/N1 vs b/N2', row.populationMismatch === true && row.populationMismatchLabel === '母體不等（5/10 vs 4/9）');
+    const mdR4 = reportMarkdown(cfgR4, repR4), hR4 = R.renderReportHtml(repR4, {});
+    t('v1.5-1：Markdown／HTML 都印出母體不等標記', /母體不等（5\/10 vs 4\/9）/.test(mdR4) && /母體不等（5\/10 vs 4\/9）/.test(hR4));
+    // 陰性對照：同母體（兩臂各 3 次判定）時不標母體不等
+    const cfgEq = { name: 'fx-benefit-eq', runs: 3, arms: twoArms, assertions: [{ id: 'o-eq', family: 'orientation', text: 'o eq' }], cases: [{ id: 'c1', assertions: ['o-eq'] }] };
+    const repEq = buildFixture('benefit-eq', cfgEq, { c1: {
+      with: [[[V('o-eq', true)]], [[V('o-eq', true)]], [[V('o-eq', false)]]],
+      without: [[[V('o-eq', true)]], [[V('o-eq', false)]], [[V('o-eq', false)]]],
+    } });
+    t('v1.5-1 陰性對照：同母體的列不標母體不等', repEq.benefit.rows[0].populationMismatch === false && repEq.benefit.rows[0].populationMismatchLabel === null);
+  }
+
   // --- 三路線建議（A2）各分支 ---
   // 手推（3 題 × 每組 2 次；assertions fact-a／fact-b，全部進計分且兩組母體一致）：
   //   c-good  帶：兩次都 a✓b✓ → 全對 2/2＝100%；不帶：兩次 a✗b✓ → 全對 0/2＝0%
@@ -761,6 +798,7 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
       c2: { with: [[[V('gate-g', true), V('fact-f', true)]]], without: [[[V('gate-g', true), V('fact-f', true)]]] },
     });
     t('v1.4-4：前置檢查（gate）判定回 null → 第一頁判資料不足（計分口徑看不到這個洞）', /資料不足/.test(repG.decisionFirst[0]) && /gate-g/.test(repG.decisionFirst[0]) && /判定回 null 或缺判定/.test(repG.decisionFirst[0]));
+    t('v1.5-2：report.expectations 稀疏補記 nullKeys——只記回 null 的那個 case×run，不是每個判定都記', JSON.stringify(repG.expectations['gate-g'].arms.with.nullKeys) === JSON.stringify(['c1/r1']) && repG.expectations['gate-g'].arms.without.nullKeys.length === 0);
     const cfgON = { name: 'fx-orientnull', runs: 1, arms: twoArms,
       assertions: [{ id: 'fact-f', family: 'fact', text: 'fact f' }, { id: 'orient-o', family: 'orientation', text: 'orient o' }],
       cases: [{ id: 'c1', assertions: ['fact-f', 'orient-o'] }, { id: 'c2', assertions: ['fact-f', 'orient-o'] }] };
@@ -852,6 +890,63 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
     t('v1.4-5：舊報告沒有場景全對制欄位 ⇒ 重出 HTML 不加成本派生段、不出現場景全對口徑', !/深究：成本派生欄/.test(hOld) && !/場景全對/.test(hOld) && !/每次全對的成本/.test(hOld) && !/成本記錄不完整/.test(hOld));
     t('v1.4-5：舊報告的既有內容照樣出得來（中位數成本表、逐題、逐條斷言）', /每次費用中位數/.test(hOld) && /逐題/.test(hOld) && /fact-f/.test(hOld));
     t('v1.4-5：舊報告沒有環節效益表與決策摘要欄位時不憑空生出來', !/環節效益表/.test(hOld) && !/決策摘要/.test(hOld));
+
+    // v1.5-4：上面那份舊報告的兩組總格數剛好相等，只會走 secKeyPoints 的 sameDenominator 分支——不會踩到
+    // 「總格數不同」與「兩組都沒有計分格」這兩個原本沒判斷報告新舊、會漏講出「場景全對」的分支，這裡補上。
+    const oldUnequal = { ...oldRep, name: 'fx-old-unequal',
+      cases: [{ id: 'c1', type: null, arms: { with: { pass: 2, total: 2, validRuns: 1, invalidRuns: 0, failures: 0 }, without: { pass: 1, total: 1, validRuns: 1, invalidRuns: 0, failures: 0 } } }],
+      totals: { with: { pass: 2, total: 2 }, without: { pass: 1, total: 1 } },
+      sensitivity: { delta: 1, sameDenominator: false, flipsToErase: null, flipsToReverse: null, note: '' } };
+    const hUnequal = R.renderReportHtml(oldUnequal, {});
+    t('v1.5-4：舊報告兩組總格數不同時，先看這裡也不得出現「場景全對」措辭（現行只顧到成本派生段時漏了這支）', !/場景全對/.test(hUnequal));
+
+    const oldNoScored = { ...oldRep, name: 'fx-old-noscored', totals: {} };
+    const hNoScored = R.renderReportHtml(oldNoScored, {});
+    t('v1.5-4：舊報告完全沒有計分格時，先看這裡也不得出現「場景全對」措辭', !/場景全對/.test(hNoScored));
+
+    // 陽性對照：同樣兩支分支，新報告（有 costFlow）該正常出現「場景全對」措辭——確認不是把整段話拔掉
+    const newUnequal = { ...oldUnequal, name: 'fx-new-unequal', costFlow: { threshold: 0.2, note: '' } };
+    const hNewUnequal = R.renderReportHtml(newUnequal, {});
+    t('v1.5-4 陽性對照：新報告（有 costFlow）總格數不同時照樣出現「場景全對」措辭', /場景全對/.test(hNewUnequal));
+    const newNoScored = { ...oldNoScored, name: 'fx-new-noscored', costFlow: { threshold: 0.2, note: '' } };
+    const hNewNoScored = R.renderReportHtml(newNoScored, {});
+    t('v1.5-4 陽性對照：新報告（有 costFlow）沒有計分格時照樣出現「場景全對」措辭', /場景全對/.test(hNewNoScored));
+  }
+
+  // --- v1.5-5：baselineVerdict 的 NO-DATA／validRuns=0 說法——「先補跑」只指 harness failure，
+  // gate-false（沒過前置檢查）是有效但未成功的結果，不必補跑，改講「詳見決策摘要」---
+  {
+    const cfgBV = { name: 'fx-baseline-note', runs: 1, arms: twoArms,
+      assertions: [{ id: 'gate-g', family: 'gate', text: 'gate g' }, { id: 'fact-f', family: 'fact', text: 'fact f' }],
+      cases: [{ id: 'c1', assertions: ['gate-g', 'fact-f'] }, { id: 'c2', assertions: ['gate-g', 'fact-f'] }] };
+
+    // 只有 harness failure（無 gate-false）：note 只該有「先補跑」，不出現「有效但未成功」
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-bv-hf-'));
+      tmpDirs.push(dir);
+      mkRun(dir, 'c1', 'without', 'r1', META({ case: 'c1', arm: 'without' }), { case: 'c1', arm: 'without', run: 'r1', harnessFailure: true, verdicts: [] });
+      mkRun(dir, 'c2', 'without', 'r1', META({ case: 'c2', arm: 'without' }), { case: 'c2', arm: 'without', run: 'r1', harnessFailure: true, verdicts: [] });
+      const bv = baselineVerdict(cfgBV, dir);
+      t('v1.5-5：baselineVerdict——只有 harness failure（無 gate-false）時 note 只提「先補跑」，不出現「有效但未成功」', bv.verdict === 'NO-DATA' && /前置作廢或失敗 2 次），先補跑/.test(bv.note) && !/有效但未成功/.test(bv.note));
+    }
+    // 只有 gate-false（無 harness failure）：note 該講「有效但未成功／詳見決策摘要」，不出現「先補跑」
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-bv-gf-'));
+      tmpDirs.push(dir);
+      mkRun(dir, 'c1', 'without', 'r1', META({ case: 'c1', arm: 'without' }), GRADE('c1', 'without', 'r1', [V('gate-g', false), V('fact-f', true)]));
+      mkRun(dir, 'c2', 'without', 'r1', META({ case: 'c2', arm: 'without' }), GRADE('c2', 'without', 'r1', [V('gate-g', false), V('fact-f', true)]));
+      const bv = baselineVerdict(cfgBV, dir);
+      t('v1.5-5：baselineVerdict——只有 gate-false（無 harness failure）時 note 講「有效但未成功／詳見決策摘要」，不出現「先補跑」', bv.verdict === 'NO-DATA' && /2 次都沒過前置檢查（有效但未成功）/.test(bv.note) && /詳見決策摘要/.test(bv.note) && !/先補跑/.test(bv.note));
+    }
+    // 兩者都有：note 分開講——harness failure 才「先補跑」，gate-false 講「有效但未成功」
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-bv-both-'));
+      tmpDirs.push(dir);
+      mkRun(dir, 'c1', 'without', 'r1', META({ case: 'c1', arm: 'without' }), { case: 'c1', arm: 'without', run: 'r1', harnessFailure: true, verdicts: [] });
+      mkRun(dir, 'c2', 'without', 'r1', META({ case: 'c2', arm: 'without' }), GRADE('c2', 'without', 'r1', [V('gate-g', false), V('fact-f', true)]));
+      const bv = baselineVerdict(cfgBV, dir);
+      t('v1.5-5：baselineVerdict——同時有兩種時 note 分開講，各自措辭正確', bv.verdict === 'NO-DATA' && /前置作廢或失敗 1 次，先補跑/.test(bv.note) && /另有 1 次沒過前置檢查（有效但未成功）/.test(bv.note) && /詳見決策摘要/.test(bv.note));
+    }
   }
 
   for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
@@ -876,6 +971,15 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
     t('usdFmt：分得開的一組不加原值（不製造雜訊）', g(0.02) === '$0.020' && g(0.01) === '$0.010');
     const h2 = usdFmt([1e-7, 2e-7]);
     t('usdFmt：小到位數上限印不出來時走「<$…（原值 …）」，兩值仍不相同', h2(1e-7) === '<$0.000001（原值 1e-7）' && h2(2e-7) === '<$0.000001（原值 2e-7）');
+  }
+  // v1.5-3：distinct 用原值嚴格不等，不經 toFixed(10) 正規化——十位以後才不同的值也不能被判成「同一個值」而漏掉碰撞處理
+  {
+    const tiny = [1.00000000001, 1.00000000002];
+    t('usdDigits：十位以後才不同的值仍算 distinct（不被 toFixed(10) 合併成同一個 key）', usdDigits(tiny) === R.usdDigits(tiny) && usdDigits(tiny) === 6);
+    const f = usdFmt(tiny), fr = R.usdFmt(tiny);
+    t('usdFmt：十位以後才不同的兩個值不得印成同一串（附原值），render.mjs 複本同步',
+      f(tiny[0]) !== f(tiny[1]) && f(tiny[0]) === fr(tiny[0]) && f(tiny[1]) === fr(tiny[1])
+      && f(tiny[0]).includes('原值 1.00000000001') && f(tiny[1]).includes('原值 1.00000000002'));
   }
   t('validCostUsd：只收有限且非負；負值、NaN、Infinity、字串都回 null', validCostUsd(0) === 0 && validCostUsd(1.5) === 1.5 && validCostUsd(-0.1) === null && validCostUsd(NaN) === null && validCostUsd(Infinity) === null && validCostUsd('1') === null);
 }
@@ -924,6 +1028,31 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   t('benefitKind：兩組判定數不同時用比率差（門檻＝一次的比率），不硬減次數', K(3, 3, 2, 4) === 'positive' && K(2, 4, 1, 2) === 'middling');
 }
 
+// v1.5-2：comparabilityIssue 對四 family（report.expectations）的 nullKeys 比對——nulls>0 的 assertion 稀疏補記 keys，
+// 讓「兩臂 null 計數相同、但落在不同 case×run」這種漏網被抓到（現行只有計分 family 的 report.assertions 有 keys）。
+{
+  const mkR = (withArm, withoutArm) => ({
+    totals: { with: { pass: 2, total: 2 }, without: { pass: 2, total: 2 } },
+    invalidRuns: [],
+    assertions: { 'fact-f': { arms: { with: { pass: 2, total: 2, keys: ['c1/r1', 'c2/r1'] }, without: { pass: 2, total: 2, keys: ['c1/r1', 'c2/r1'] } } } },
+    expectations: { 'orient-o': { arms: { with: withArm, without: withoutArm } } },
+  });
+  const crossed = mkR(
+    { pass: 1, fail: 0, nulls: 1, total: 2, nullKeys: ['c1/r1'] },
+    { pass: 1, fail: 0, nulls: 1, total: 2, nullKeys: ['c2/r1'] }
+  );
+  t('comparabilityIssue：四 family null 計數相同但落在不同 case×run（交錯）⇒ 判不可比', /四類檢查項判定回 null 的位置不同/.test(comparabilityIssue(crossed, 'with', 'without') || ''));
+  // 陰性對照：null 落在同一個 case×run（同一批）⇒ 不判不可比
+  const same = mkR(
+    { pass: 1, fail: 0, nulls: 1, total: 2, nullKeys: ['c1/r1'] },
+    { pass: 1, fail: 0, nulls: 1, total: 2, nullKeys: ['c1/r1'] }
+  );
+  t('comparabilityIssue：四 family null 落在同一批 run 時不判不可比（陰性對照，guard 沒有過度觸發）', comparabilityIssue(same, 'with', 'without') === null);
+  // 陰性對照：完全沒有 null（正常情形）⇒ 不判不可比
+  const clean = mkR({ pass: 2, fail: 0, nulls: 0, total: 2, nullKeys: [] }, { pass: 2, fail: 0, nulls: 0, total: 2, nullKeys: [] });
+  t('comparabilityIssue：四 family 都沒有 null 時不判不可比（陰性對照）', comparabilityIssue(clean, 'with', 'without') === null);
+}
+
 // HTML 渲染器（若存在）：三種都能吐出含關鍵字的 HTML、不含外部資源
 try {
   const R = await import('./render.mjs');
@@ -933,6 +1062,25 @@ try {
   t('render：報告 HTML 無外部資源', !/(src|href)=["']https?:\/\//.test(h1) && !/@import\s+url\(/.test(h1));
   const h2 = R.renderMatrixHtml(mx, {}); t('render：矩陣 HTML', /m1-default/.test(h2));
   const h3 = R.renderDescribeHtml(dfake, {}); t('render：描述優化 HTML', /held-out|最佳/.test(h3));
+
+  // v1.5-3：逐 run chip 一律走 usdFmt——同一頁兩個 run 的 costUsd 在預設位數下會碰撞時不得印成同一串
+  {
+    const sampleCost = { ...sample, runs: [
+      { case: 'c1', arm: 'with', run: 'r1', ok: true, durationMs: 1, costUsd: 1.0000001, verdicts: [{ id: 'x', pass: true, evidence: 'e' }], artifacts: [] },
+      { case: 'c1', arm: 'without', run: 'r1', ok: true, durationMs: 1, costUsd: 1.0000002, verdicts: [{ id: 'x', pass: false, evidence: 'e' }], artifacts: [] },
+    ] };
+    const hc = R.renderReportHtml(sampleCost, {});
+    t('render：逐 run 費用 chip 碰撞時附原值，兩個 run 不印成同一串', /1\.0000001/.test(hc) && /1\.0000002/.test(hc) && !/\$1\.0000<\/span>[\s\S]*\$1\.0000<\/span>/.test(hc));
+  }
+  // v1.5-3：矩陣頁的每次費用中位數同樣走 usdFmt——不同格碰撞時附原值
+  {
+    const mxCost = { name: 'mx-cost', arms: ['with', 'without'], combos: [
+      { slug: 'a', executorModel: 'ma', status: 'done', totals: {}, cost: { with: { medianDurationS: 1, medianCostUsd: 1.0000001 } } },
+      { slug: 'b', executorModel: 'mb', status: 'done', totals: {}, cost: { with: { medianDurationS: 1, medianCostUsd: 1.0000002 } } },
+    ] };
+    const hm = R.renderMatrixHtml(mxCost, {});
+    t('render：矩陣每次費用中位數碰撞時附原值，不同格不印成同一串', /1\.0000001/.test(hm) && /1\.0000002/.test(hm));
+  }
 
   // label 顯示：assertion 有 label 就顯示 label（text 放 title），沒有就照舊顯示 text（回歸）
   const sampleL = { ...sample, assertions: { x: { family: 'fact', text: 'X 給評分者的原文', label: 'X 給人看的白話', arms: { with: { pass: 1, total: 1 }, without: { pass: 0, total: 1 } } } } };

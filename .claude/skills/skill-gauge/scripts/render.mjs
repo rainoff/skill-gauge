@@ -39,10 +39,11 @@ const fmtRatio = (x) => (num(x) === null ? '—' : String(num(x)));
 // 美元：位數自適應（同一組要比較的值取共同位數，避免不同值顯示成一樣、或都顯示成 $0.000）；預設 3 位，最多到 6 位。
 // 這兩個函式跟 gauge.mjs 的同名函式是同一套規則（render.mjs 保持零 import，所以留一份複本；
 // selftest 逐值對照兩邊輸出必須完全相同，任一邊改了另一邊沒改就會紅）。
+// distinct 用原值嚴格不等（不經 toFixed(10)；理由同 gauge.mjs 的 usdDigits，v1.5-3）
 export function usdDigits(vals, { min = 3, max = 6 } = {}) {
   const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
   if (nums.length < 2) return min;
-  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  const distinct = new Set(nums).size;
   for (let d = min; d < max; d++) { if (new Set(nums.map((v) => v.toFixed(d))).size >= distinct) return d; }
   return max;
 }
@@ -59,7 +60,7 @@ export function fmtUsd(x, digits = 3, { raw = false } = {}) {
 export function usdFmt(vals, opts = {}) {
   const digits = usdDigits(vals, opts);
   const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
-  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  const distinct = new Set(nums).size; // 原值嚴格不等，理由同 usdDigits（v1.5-3）
   const collides = new Set(nums.map((v) => v.toFixed(digits))).size < distinct;
   const f = (x) => fmtUsd(x, digits, { raw: collides });
   f.digits = digits; f.collides = collides;
@@ -81,6 +82,20 @@ function natCmp(a, b) {
 
 // 秒／毫秒
 const secFromMs = (ms) => (num(ms) === null ? null : num(ms) / 1000);
+
+// 舊報告（1.1.x，重出時沒有場景全對制那組欄位）偵測：依欄位存在判斷，不依總格數（正式裁定 v1.4-5）。
+// benefit／costFlow／cost[arm] 的場景全對制欄位（successRuns 等）任一存在＝新報告；三者都沒有才是舊報告——
+// 全站只留這一個判斷點，不要每個消費者各自猜一次（v1.5-4：舊的判斷只看 cost 欄位，secKeyPoints 沒接，漏了兩處措辭）。
+function isNewReportShape(r) {
+  const ro = asObj(r);
+  if (isObj(ro.benefit)) return true;
+  if (isObj(ro.costFlow)) return true;
+  const cost = asObj(ro.cost);
+  return Object.values(cost).some((c) => {
+    const co = asObj(c);
+    return co.successRuns !== undefined || co.notFirstPassRuns !== undefined || co.indeterminateRuns !== undefined || co.discardedRuns !== undefined || co.perSuccessCostUsd !== undefined || co.costComplete !== undefined;
+  });
+}
 
 // ---------- 中文對照 ----------
 const FAMILY_LABEL = { gate: '前置檢查', fact: '事實檢查', judgment: '判斷檢查', orientation: '取向觀察' };
@@ -502,6 +517,7 @@ function secKeyPoints(r, arms, sens) {
   const A = arms[0], B = arms[1];
   const L = [];
   const bl = r.baseline ? asObj(r.baseline) : null;
+  const isNew = isNewReportShape(r); // 舊報告（1.1.x）不套「場景全對」措辭——那個口徑當初根本不存在（v1.5-4）
 
   if (bl) {
     const v = txt(bl.verdict);
@@ -525,7 +541,7 @@ function secKeyPoints(r, arms, sens) {
       s += '（翻格數是脆弱度計數，不是統計檢定）';
       s += sens.derived ? '（差距與翻幾格由兩組通過數當場推得）。' : '。';
     } else if (sens) {
-      s += `差 ${esc(sens.delta)} 格，但兩組總格數不同（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗），不做「翻幾格反轉」句；計分格這一層先擱著，看決策摘要的場景全對率。`;
+      s += `差 ${esc(sens.delta)} 格，但兩組總格數不同（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗），不做「翻幾格反轉」句；計分格這一層先擱著${isNew ? '，看決策摘要的場景全對率' : ''}。`;
     }
     L.push(s);
   } else if (hasA || hasB) {
@@ -534,7 +550,7 @@ function secKeyPoints(r, arms, sens) {
       `只有${esc(armSay(only))}這一組有計分格：通過 ${esc(hasA || hasB)}${r.baseline ? '' : '（另一組還沒跑，或整組沒過前置檢查／全數前置作廢）'}。`
     );
   } else {
-    L.push('兩組都還沒有可比的計分格（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗）——場景全對率看決策摘要那一行。');
+    L.push(`兩組都還沒有可比的計分格（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗）${isNew ? '——場景全對率看決策摘要那一行' : ''}。`);
   }
 
   for (const pl of asArr(r.placebo)) {
@@ -831,7 +847,7 @@ function secBenefit(r) {
       { td: `<td class="num">${cellOf(o.with)}</td>` },
       { td: `<td class="num">${cellOf(o.without)}</td>` },
       { td: `<td class="num">${esc((d > 0 ? '+' : '') + Math.round(d * 100))}%</td>` },
-      chip(txt(o.kindZh), BENEFIT_CHIP[txt(o.kind)] ?? ''),
+      chip(txt(o.kindZh), BENEFIT_CHIP[txt(o.kind)] ?? '') + (o.populationMismatch ? ` ${chip(txt(o.populationMismatchLabel), 'warn')}` : ''),
     ];
   });
   const inner = table(['檢查項', '類別', { html: '帶 skill', num: true }, { html: '不帶', num: true }, { html: '差', num: true }, '判讀'], trs) +
@@ -1085,11 +1101,8 @@ function secCost(r, arms) {
 
   // 深究：成本派生欄的完整分子分母與完整度——決策摘要的【成本】行就是從這裡算出來的。
   // 舊報告（1.1.x，沒有場景全對制那組欄位）重出時整段不渲染：不能把 v1.2 的派生語義套到當初沒有這個口徑的資料上（正式裁定 v1.4-5）。
-  const hasScenarioCost = present.some((a) => {
-    const c = asObj(cost[a]);
-    return c.successRuns !== undefined || c.notFirstPassRuns !== undefined || c.indeterminateRuns !== undefined || c.discardedRuns !== undefined || c.perSuccessCostUsd !== undefined || c.costComplete !== undefined;
-  });
-  if (!hasScenarioCost) {
+  // 判斷點與 secKeyPoints 共用 isNewReportShape，不各自猜一次（v1.5-4）。
+  if (!isNewReportShape(r)) {
     return section('cost', '成本', inner, '中位數（每次大約多少）。費用依帳號方案而異，只當同一次量測內的相對參考。');
   }
   const successFmt = usdFmt(present.map((a) => num(asObj(cost[a]).perSuccessCostUsd)));
@@ -1193,6 +1206,8 @@ function secOutputs(r, arms) {
   });
 
   const caseMeta = new Map(asArr(r.cases).map((c) => [txt(asObj(c).id), asObj(c)]));
+  // 逐 run 的費用 chip 跟這一頁所有 run 共用同一個 usdFmt（位數一起挑、碰撞一起附原值）——不能每個 chip 各配各的 toFixed（v1.5-3）。
+  const runCostFmt = usdFmt(runs.map((x) => num(asObj(x).costUsd)));
 
   const blocks = keys
     .map((k) => {
@@ -1202,7 +1217,7 @@ function secOutputs(r, arms) {
       const cols = armKeys
         .map((a) => {
           const mine = list.filter((x) => txt(x.arm) === a).sort((x, y) => natCmp(x.run, y.run));
-          return `<div><div class="col-head">${armHeadHtml(a)}</div>${mine.map((run) => runDetails(run, assertions)).join('')}</div>`;
+          return `<div><div class="col-head">${armHeadHtml(a)}</div>${mine.map((run) => runDetails(run, assertions, runCostFmt)).join('')}</div>`;
         })
         .join('');
       return `<div class="case-block">
@@ -1227,7 +1242,7 @@ function secOutputs(r, arms) {
   );
 }
 
-function runDetails(run, assertions) {
+function runDetails(run, assertions, costFmt) {
   const o = asObj(run);
   const verdicts = asArr(o.verdicts).map(asObj);
   const scored = verdicts.filter((v) => !FAMILY_UNSCORED.has(txt(asObj(asObj(assertions)[txt(v.id)]).family)) && v.pass !== null); // pass:null＝判不出來、不算分
@@ -1244,7 +1259,7 @@ function runDetails(run, assertions) {
   const dur = fmtDur(secFromMs(o.durationMs));
   if (dur) chips.push(chip(dur));
   if (num(o.outputTokens) !== null) chips.push(chip(`輸出 ${o.outputTokens} token`));
-  if (num(o.costUsd) !== null) chips.push(chip(`$${num(o.costUsd).toFixed(4)}`));
+  if (num(o.costUsd) !== null) chips.push(chip(costFmt ? costFmt(num(o.costUsd)) : `$${num(o.costUsd).toFixed(4)}`));
   if (o.skillFired === true) chips.push(chip('skill 載入 ✓', 'ok'));
   else if (o.skillFired === false) chips.push(chip('skill 載入 ✗', 'warn'));
   else chips.push(chip('skill 載入 判不出來'));
@@ -1343,6 +1358,9 @@ export function renderMatrixHtml(matrix, opts = {}) {
   const statusChip = (s) =>
     s === 'done' ? chip('跑完', 'ok') : s === 'stopped' ? chip('停案', 'warn') : s === 'failed' ? chip('失敗', 'bad') : chip(txt(s) || '—');
 
+  // 矩陣整頁的每次費用中位數共用一個 usdFmt（位數一起挑、碰撞一起附原值）——不能每一格各自 toFixed(3)（v1.5-3）。
+  const matrixCostFmt = usdFmt(combos.flatMap((c) => arms.map((a) => num(asObj(asObj(c.cost)[a]).medianCostUsd))));
+
   // 總表
   const rows = combos.map((c) => {
     const sens = sensitivityOf(c, arms);
@@ -1353,8 +1371,8 @@ export function renderMatrixHtml(matrix, opts = {}) {
       .map((a) => {
         const x = asObj(asObj(c.cost)[a]);
         if (num(x.medianDurationS) === null && num(x.medianCostUsd) === null) return null;
-        return `${esc(armSay(a))}${esc(num(x.medianDurationS) === null ? '—' : num(x.medianDurationS).toFixed(0))} 秒／$${esc(
-          num(x.medianCostUsd) === null ? '—' : num(x.medianCostUsd).toFixed(3)
+        return `${esc(armSay(a))}${esc(num(x.medianDurationS) === null ? '—' : num(x.medianDurationS).toFixed(0))} 秒／${esc(
+          matrixCostFmt(x.medianCostUsd) ?? '$—'
         )}`;
       })
       .filter(Boolean)
