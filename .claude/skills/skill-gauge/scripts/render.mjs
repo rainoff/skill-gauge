@@ -39,19 +39,31 @@ const fmtRatio = (x) => (num(x) === null ? '—' : String(num(x)));
 // 美元：位數自適應（同一組要比較的值取共同位數，避免不同值顯示成一樣、或都顯示成 $0.000）；預設 3 位，最多到 6 位。
 // 這兩個函式跟 gauge.mjs 的同名函式是同一套規則（render.mjs 保持零 import，所以留一份複本；
 // selftest 逐值對照兩邊輸出必須完全相同，任一邊改了另一邊沒改就會紅）。
-export function usdDigits(vals) {
+export function usdDigits(vals, { min = 3, max = 6 } = {}) {
   const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
-  if (nums.length < 2) return 3;
+  if (nums.length < 2) return min;
   const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
-  for (let d = 3; d < 6; d++) { if (new Set(nums.map((v) => v.toFixed(d))).size >= distinct) return d; }
-  return 6;
+  for (let d = min; d < max; d++) { if (new Set(nums.map((v) => v.toFixed(d))).size >= distinct) return d; }
+  return max;
 }
-export function fmtUsd(x, digits = 3) {
+export function fmtUsd(x, digits = 3, { raw = false } = {}) {
   const v = num(x);
   if (v === null || !Number.isFinite(v)) return null;
   const eps = Math.pow(10, -digits);
   if (v !== 0 && Math.abs(v) < eps) return `<$${eps.toFixed(digits)}（原值 ${v}）`;
-  return `$${v.toFixed(digits)}`;
+  const s = `$${v.toFixed(digits)}`;
+  // raw＝這一組值到了位數上限還是印成同一串：附原值，不同金額不印成同一串（正式裁定 v1.4-6）
+  return raw && +v.toFixed(digits) !== v ? `${s}（原值 ${v}）` : s;
+}
+// 一組要互相比較的金額共用一個 formatter（跟 gauge.mjs 的 usdFmt 同一套規則，selftest 逐值對照）
+export function usdFmt(vals, opts = {}) {
+  const digits = usdDigits(vals, opts);
+  const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
+  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  const collides = new Set(nums.map((v) => v.toFixed(digits))).size < distinct;
+  const f = (x) => fmtUsd(x, digits, { raw: collides });
+  f.digits = digits; f.collides = collides;
+  return f;
 }
 // 時長：超過兩分鐘改用分，不然逾時的 run 會出現「1200.0 秒」
 function fmtDur(sec) {
@@ -373,7 +385,7 @@ function sensitivityOf(r, arms) {
   if (num(tA.pass) === null || num(tB.pass) === null) return null;
   const d = num(tA.pass) - num(tB.pass);
   const same = num(tA.total) !== null && num(tA.total) === num(tB.total);
-  return { delta: d, flipsToErase: same ? Math.abs(d) : null, flipsToReverse: same ? Math.abs(d) + 1 : null, sameDenominator: same, note: same ? '' : '兩組總格數不同（作廢或失敗造成），不做翻格句', derived: true };
+  return { delta: d, flipsToErase: same ? Math.abs(d) : null, flipsToReverse: same ? Math.abs(d) + 1 : null, sameDenominator: same, note: same ? '' : '兩組總格數不同（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗），不做翻格句', derived: true };
 }
 
 function heatCell(x, opts = {}) {
@@ -513,16 +525,16 @@ function secKeyPoints(r, arms, sens) {
       s += '（翻格數是脆弱度計數，不是統計檢定）';
       s += sens.derived ? '（差距與翻幾格由兩組通過數當場推得）。' : '。';
     } else if (sens) {
-      s += `差 ${esc(sens.delta)} 格，但兩組總格數不同（有作廢或失敗），不做「翻幾格反轉」句；先補跑再比。`;
+      s += `差 ${esc(sens.delta)} 格，但兩組總格數不同（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗），不做「翻幾格反轉」句；計分格這一層先擱著，看決策摘要的場景全對率。`;
     }
     L.push(s);
   } else if (hasA || hasB) {
     const only = hasA ? A : B;
     L.push(
-      `只有${esc(armSay(only))}這一組有計分格：通過 ${esc(hasA || hasB)}${r.baseline ? '' : '（另一組還沒跑或全數作廢）'}。`
+      `只有${esc(armSay(only))}這一組有計分格：通過 ${esc(hasA || hasB)}${r.baseline ? '' : '（另一組還沒跑，或整組沒過前置檢查／全數前置作廢）'}。`
     );
   } else {
-    L.push('兩組都還沒有可比的計分格（run 作廢或失敗）。');
+    L.push('兩組都還沒有可比的計分格（有 run 沒過前置檢查而不進計分，或有前置作廢／失敗）——場景全對率看決策摘要那一行。');
   }
 
   for (const pl of asArr(r.placebo)) {
@@ -595,7 +607,7 @@ function secKeyPoints(r, arms, sens) {
 
   const inv = asArr(r.invalidRuns), hf = asArr(r.harnessFailures);
   if (inv.length || hf.length) {
-    L.push(`有 ${esc(inv.length)} 次作廢、${esc(hf.length)} 次執行／評分失敗，補跑前數字不完整。`);
+    L.push(`有 ${esc(inv.length)} 次沒過前置檢查（有效但未成功，不進計分、不用補跑）、${esc(hf.length)} 次執行或評分失敗（前置作廢，要補跑）。`);
   }
 
   const hist = asObj(r.history);
@@ -748,7 +760,7 @@ function secTotals(r, arms, sens) {
     ]);
     inner += `<h3>停案規則（不帶 skill 那組先跑）</h3>
 <p>判定：<strong>${esc(BASELINE_VERDICT[v] || v || '—')}</strong>${v ? `（<code>${esc(v)}</code>）` : ''}——${esc(txt(bl.note))}</p>
-<p class="note">有效 run ${esc(fmtOr(bl.validRuns))} 次；作廢 ${esc(fmtOr(bl.invalidRuns))} 次；執行或評分失敗 ${esc(fmtOr(bl.harnessFailures))} 次。${
+<p class="note">有效 run ${esc(fmtOr(bl.validRuns))} 次；沒過前置檢查 ${esc(fmtOr(bl.invalidRuns))} 次；執行或評分失敗（前置作廢，要補跑）${esc(fmtOr(bl.harnessFailures))} 次。${
       asArr(bl.weakAssertions).length ? `沒全過的檢查項：${asArr(bl.weakAssertions).map((x) => `<code>${esc(txt(x))}</code>`).join('、')}。` : ''
     }</p>
 ${table(['檢查項', { html: '基準組通過／總格', num: true }], perRows)}`;
@@ -804,7 +816,7 @@ function secAssertionGrid(r, arms) {
 }
 
 // 5b. 環節效益表（第二層診斷）：逐一條預期檢查看帶／不帶的通過率差，四分類
-const BENEFIT_CHIP = { negative: 'bad', bothLow: 'warn', bothHigh: 'warn', positive: '' };
+const BENEFIT_CHIP = { negative: 'bad', bothLow: 'warn', bothHigh: 'warn', middling: '', positive: '' };
 function secBenefit(r) {
   const b = asObj(r.benefit);
   const rows = asArr(b.rows);
@@ -823,11 +835,13 @@ function secBenefit(r) {
     ];
   });
   const inner = table(['檢查項', '類別', { html: '帶 skill', num: true }, { html: '不帶', num: true }, { html: '差', num: true }, '判讀'], trs) +
-    `<ul class="keypoints"><li><strong>負效益（帶 skill 反而差）</strong>＝幫倒忙的具體位置，改 skill 時最優先。</li>` +
+    `<ul class="keypoints"><li>分類先看有沒有實質差（通過次數差 ≥1 次），沒有實質差才看水準。</li>` +
+    `<li><strong>負效益（帶 skill 反而差）</strong>＝幫倒忙的具體位置，改 skill 時最優先。</li>` +
+    `<li><strong>正效益</strong>＝帶 skill 明顯多過，值得延伸的地方。</li>` +
     `<li><strong>兩邊都低</strong>＝出題問題或能力缺口，先改題目。</li>` +
     `<li><strong>兩邊都高</strong>＝這個環節 skill 沒貢獻；如果它是主賣點，就是「沒用」的警訊。</li>` +
-    `<li><strong>正效益</strong>＝值得延伸的地方。</li></ul>` +
-    `<p class="note">${esc(txt(b.note))}${num(b.skipped) ? ` 另有 ${esc(fmtOr(b.skipped))} 條檢查項因為有一組沒有明確判定，沒進這張表。` : ''}</p>`;
+    `<li><strong>中段（沒有實質差）</strong>＝兩組差不多，也看不出水準特別高或低。</li></ul>` +
+    `<p class="note">${esc(txt(b.note))}${nz(asObj(b.thresholds).note) ? ' 分類門檻：' + esc(txt(asObj(b.thresholds).note)) : ''}${num(b.skipped) ? ` 另有 ${esc(fmtOr(b.skipped))} 條檢查項因為有一組沒有明確判定，沒進這張表。` : ''}</p>`;
   return section('benefit', '環節效益表（哪個環節幫上忙、哪個環節幫倒忙）', inner,
     b.thin === true ? '每格樣本薄——這張表當線索，不當定論。' : '逐條檢查項的通過率差；個位數次數本來就會晃，配著旗標一起讀。');
 }
@@ -845,8 +859,8 @@ function secCases(r, arms) {
       if (!frac) return { td: '<td class="cell none">—</td>' };
       const extra = [
         `有效 ${esc(fmtOr(x.validRuns))}`,
-        num(x.invalidRuns) ? `作廢 ${esc(x.invalidRuns)}` : null,
-        num(x.failures) ? `失敗 ${esc(x.failures)}` : null,
+        num(x.invalidRuns) ? `前置檢查沒過 ${esc(x.invalidRuns)}` : null,
+        num(x.failures) ? `前置作廢 ${esc(x.failures)}` : null,
       ].filter(Boolean).join('、');
       const t = num(x.total) || 0, p = num(x.pass) || 0;
       const rate = t > 0 ? p / t : 0;
@@ -874,7 +888,7 @@ function secCases(r, arms) {
   });
   const head = ['題', '型', ...arms.map((a) => ({ html: armHeadHtml(a), num: true }))];
   if (anyFired) head.push('偵測到 skill 載入／可判定次數');
-  return section('cases', '逐題', table(head, rows), '括號裡是有效 run 數；作廢＝前置檢查沒過，要補跑才算數。');
+  return section('cases', '逐題', table(head, rows), '括號裡是有效 run 數；「前置檢查沒過」是有效但未成功的結果（不進計分，不用補跑），「前置作廢」才是執行或評分失敗、要補跑的。');
 }
 
 // 7. 壓力測試
@@ -1050,8 +1064,8 @@ function tokenCell(median, sumVal, recorded, total) {
 function secCost(r, arms) {
   const cost = asObj(r.cost);
   const present = arms.filter((a) => isObj(cost[a]));
-  const medianDigits = usdDigits(present.map((a) => num(asObj(cost[a]).medianCostUsd)));
-  const sumDigits = usdDigits(present.map((a) => num(asObj(cost[a]).sumCostUsd)));
+  const medianFmt = usdFmt(present.map((a) => num(asObj(cost[a]).medianCostUsd)));
+  const sumFmt = usdFmt(present.map((a) => num(asObj(cost[a]).sumCostUsd)));
   const rows = present.map((a) => {
     const c = asObj(cost[a]);
     return [
@@ -1059,7 +1073,7 @@ function secCost(r, arms) {
       { td: `<td class="num">${esc(fmtOr(c.runs))}</td>` },
       { td: `<td class="num">${esc(num(c.medianDurationS) === null ? '—' : num(c.medianDurationS).toFixed(1))}</td>` },
       { td: `<td class="num">${esc(fmtOr(c.medianOutputTokens))}</td>` },
-      { td: `<td class="num">${esc(fmtUsd(c.medianCostUsd, medianDigits) ?? '—')}</td>` },
+      { td: `<td class="num">${esc(medianFmt(c.medianCostUsd) ?? '—')}</td>` },
       asArr(c.models).map((m) => `<code>${esc(txt(m))}</code>`).join('、') || '—',
     ];
   });
@@ -1069,12 +1083,20 @@ function secCost(r, arms) {
     rows
   );
 
-  // 深究：成本派生欄的完整分子分母與完整度——決策摘要的【成本】行就是從這裡算出來的
-  const successDigits = usdDigits(present.map((a) => num(asObj(cost[a]).perSuccessCostUsd)));
-  const passedDigits = usdDigits(present.map((a) => num(asObj(cost[a]).perPassedCheckCostUsd)));
+  // 深究：成本派生欄的完整分子分母與完整度——決策摘要的【成本】行就是從這裡算出來的。
+  // 舊報告（1.1.x，沒有場景全對制那組欄位）重出時整段不渲染：不能把 v1.2 的派生語義套到當初沒有這個口徑的資料上（正式裁定 v1.4-5）。
+  const hasScenarioCost = present.some((a) => {
+    const c = asObj(cost[a]);
+    return c.successRuns !== undefined || c.notFirstPassRuns !== undefined || c.indeterminateRuns !== undefined || c.discardedRuns !== undefined || c.perSuccessCostUsd !== undefined || c.costComplete !== undefined;
+  });
+  if (!hasScenarioCost) {
+    return section('cost', '成本', inner, '中位數（每次大約多少）。費用依帳號方案而異，只當同一次量測內的相對參考。');
+  }
+  const successFmt = usdFmt(present.map((a) => num(asObj(cost[a]).perSuccessCostUsd)));
+  const passedFmt = usdFmt(present.map((a) => num(asObj(cost[a]).perPassedCheckCostUsd)));
   const derivedRows = present.map((a) => {
     const c = asObj(cost[a]);
-    const sumCell = c.costComplete === true ? (fmtUsd(c.sumCostUsd, sumDigits) ?? '—') : `成本記錄不完整（${esc(fmtOr(c.costRecorded))}/${esc(fmtOr(c.costTotal))}）`;
+    const sumCell = c.costComplete === true ? (sumFmt(c.sumCostUsd) ?? '—') : `成本記錄不完整（${esc(fmtOr(c.costRecorded))}/${esc(fmtOr(c.costTotal))}）`;
     const denom = (num(c.successRuns) || 0) + (num(c.notFirstPassRuns) || 0);
     const fpp = denom > 0 ? `${Math.round(((num(c.successRuns) || 0) / denom) * 100)}%（proxy：${esc(fmtOr(c.successRuns))}/${esc(denom)}）` : '—';
     return [
@@ -1084,8 +1106,8 @@ function secCost(r, arms) {
       { td: `<td class="num">${esc(fmtOr(c.notFirstPassRuns))}</td>` },
       { td: `<td class="num">${esc(fmtOr(c.indeterminateRuns))}</td>` },
       { td: `<td class="num">${esc(fmtOr(c.discardedRuns))}</td>` },
-      { td: `<td class="num">${esc(fmtUsd(c.perSuccessCostUsd, successDigits) ?? '—')}</td>` },
-      { td: `<td class="num">${esc(fmtUsd(c.perPassedCheckCostUsd, passedDigits) ?? '—')}</td>` },
+      { td: `<td class="num">${esc(successFmt(c.perSuccessCostUsd) ?? '—')}</td>` },
+      { td: `<td class="num">${esc(passedFmt(c.perPassedCheckCostUsd) ?? '—')}</td>` },
       `<span class="small dim">${esc(fpp)}</span>`,
       { td: `<td class="num">${esc(tokenCell(c.medianInputTokens, c.sumInputTokens, c.inputTokensRecorded, c.inputTokensTotal))}</td>` },
       { td: `<td class="num">${esc(tokenCell(c.medianOutputTokens, c.sumOutputTokens, c.outputTokensRecorded, c.outputTokensTotal))}</td>` },
@@ -1106,7 +1128,7 @@ ${table(
   );
 }
 
-// 11. 旗標＋作廢／失敗
+// 11. 旗標＋前置檢查沒過／前置作廢
 function secFlags(r) {
   const flags = asArr(r.flags).map(txt);
   const inv = asArr(r.invalidRuns).map(txt);
@@ -1214,7 +1236,7 @@ function runDetails(run, assertions) {
 
   const chips = [];
   if (o.harnessFailure) chips.push(chip('執行或評分失敗', 'bad'));
-  else if (o.gateFailed) chips.push(chip('作廢（前置檢查沒過）', 'warn'));
+  else if (o.gateFailed) chips.push(chip('前置檢查沒過（有效但未成功，不進計分）', 'warn'));
   else if (o.ok === false) chips.push(chip('沒跑完', 'bad'));
   else chips.push(chip('正常', 'ok'));
   if (o.timedOut) chips.push(chip('逾時', 'bad'));
