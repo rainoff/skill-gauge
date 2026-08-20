@@ -4,7 +4,7 @@ process.env.GAUGE_NO_MAIN = '1';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown } = await import('./gauge.mjs');
+const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict } = await import('./gauge.mjs');
 let n = 0, bad = 0; const t = (name, cond) => { n++; if (!cond) { bad++; console.log('✗', name); } else console.log('✓', name); };
 
 // 祖先掃描：有 .claude 的上層要被抓到，自己這層不算
@@ -36,6 +36,193 @@ t('compare effort 不同＝條件不同', compareReports(mk([3, 1, 2], 'low'), m
 
 // 敏感度數學：差 D 格 → 抹平 |D|、反轉 |D|+1
 const D = 12 - 10; t('敏感度：抹平 2、反轉 3', Math.abs(D) === 2 && Math.abs(D) + 1 === 3);
+
+// 缺值誠實：sumComplete 已知答案——全部有值才回真的加總；缺一個就整個回 null（不冒充較小的完整數字）；空集合也回 null（不算 0）
+{
+  const s1 = sumComplete([1, 2, 3]);
+  t('sumComplete：全部有值→正常加總，recorded=total=3', s1.value === 6 && s1.recorded === 3 && s1.total === 3 && s1.complete === true);
+  const s2 = sumComplete([1, null, 3]);
+  t('sumComplete：部分缺值（1/3 缺）→ value=null，recorded/total 誠實回報 2/3', s2.value === null && s2.recorded === 2 && s2.total === 3 && s2.complete === false);
+  const s3 = sumComplete([]);
+  t('sumComplete：空集合→ value=null（不是 0），total=0', s3.value === null && s3.recorded === 0 && s3.total === 0 && s3.complete === false);
+  const s4 = sumComplete([null, null]);
+  t('sumComplete：全缺值→ value=null，recorded=0/total=2', s4.value === null && s4.recorded === 0 && s4.total === 2);
+}
+
+// 成本派生欄：已知答案（陽性：3 元／3 個成功 run／1 個有效但未成功／6 個過的格 → 逐項算對；
+// 陰性：成功數 0 不准除以 0，回 null，一次到位率仍能算；分母（成功＋有效但未成功）也是 0 時一次到位率回 null；
+// totalCostUsd 為 null（成本記錄不完整）時兩個 USD 派生欄都回 null，但一次到位率不受影響——它只跟 gate 分類有關，跟成本完整度無關）
+const dmPos = deriveCostMetrics({ totalCostUsd: 3, successRuns: 3, notFirstPassRuns: 1, passedChecks: 6 });
+t('成本派生（陽性）：每次全對的成本 3/3=1、每過格成本 3/6=0.5、一次到位率 3/(3+1)=0.75', dmPos.perSuccessCostUsd === 1 && dmPos.perPassedCheckCostUsd === 0.5 && Math.abs(dmPos.firstPassRate - 0.75) < 1e-9);
+const dmZeroSuccess = deriveCostMetrics({ totalCostUsd: 5, successRuns: 0, notFirstPassRuns: 2, passedChecks: 0 });
+t('成本派生（陰性）：成功數與通過格數都 0 時，每次全對的成本／每過格成本回 null（不除以 0）；一次到位率 0/(0+2)=0（分母仍在）', dmZeroSuccess.perSuccessCostUsd === null && dmZeroSuccess.perPassedCheckCostUsd === null && dmZeroSuccess.firstPassRate === 0);
+const dmZeroDenom = deriveCostMetrics({ totalCostUsd: 5, successRuns: 0, notFirstPassRuns: 0, passedChecks: 0 });
+t('成本派生（陰性）：成功＋有效但未成功也是 0 時，一次到位率同樣回 null（不除以 0）', dmZeroDenom.firstPassRate === null);
+const dmNullCost = deriveCostMetrics({ totalCostUsd: null, successRuns: 3, notFirstPassRuns: 1, passedChecks: 6 });
+t('成本派生（缺值）：totalCostUsd=null 時兩個 USD 派生欄回 null，一次到位率不受影響仍為 0.75', dmNullCost.perSuccessCostUsd === null && dmNullCost.perPassedCheckCostUsd === null && Math.abs(dmNullCost.firstPassRate - 0.75) < 1e-9);
+
+// 美元位數自適應：目前位數下兩個不同值會顯示一樣（含都顯示成 0）就加位數，直到能分辨或到位數上限；只有一個值或都缺值維持預設 3 位
+t('usdDigits：3 位就分得出來，維持 3 位', usdDigits([0.02, 0.01]) === 3);
+t('usdDigits：3 位下顯示一樣（0.002 vs 0.002）→ 加到 4 位分得出來', usdDigits([0.0021, 0.0024]) === 4 && fmtUsd(0.0021, 4) === '$0.0021' && fmtUsd(0.0024, 4) === '$0.0024');
+t('usdDigits：3 位下都顯示成 0.000（0.0001 vs 0.0002）→ 加到 4 位', usdDigits([0.0001, 0.0002]) === 4);
+t('usdDigits：只有一個值就維持預設 3 位（沒有東西要分辨）', usdDigits([0.02]) === 3);
+t('fmtUsd：null 回 null', fmtUsd(null, 3) === null);
+
+// 決策優先摘要 v2（場景全對制）：主敘事是【成功率】，格數降為第二層；固定行＝結論／成功率／情境地圖／效果／穩度／成本／邊界＋三路線建議。
+// 成本行用「場景全對（AI 評分）」，不出現「機械層全過」「判定通過」；一次到位仍是 proxy：x/y 格式＋「非人機來回實測」字樣。
+{
+  const dfRep = { name: 'fx-cost', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], runsPlanned: 10,
+    cases: [
+      { id: 'c-high', arms: { with: { scenario: { success: 9, notFirstPass: 1, indeterminate: 0, discarded: 0 } }, without: { scenario: { success: 6, notFirstPass: 4, indeterminate: 0, discarded: 0 } } } },
+    ],
+    totals: { with: { pass: 9, total: 10 }, without: { pass: 6, total: 10 } }, sensitivity: { delta: 3, sameDenominator: true, flipsToReverse: 4 },
+    cost: { with: { runs: 10, costComplete: true, perSuccessCostUsd: 0.02, successRuns: 9, notFirstPassRuns: 1 }, without: { runs: 10, costComplete: true, perSuccessCostUsd: 0.01, successRuns: 6, notFirstPassRuns: 4 } },
+    summary: { verdict: 'better', needFix: '有幫助，可以留著：多 3 格', winsPlain: ['某檢查項'] } };
+  const dfl = decisionFirstLines(dfRep);
+  const head = (tag) => dfl.find((l) => l.startsWith(tag)) || '';
+  t('決策優先 v2：固定七行齊全（結論／成功率／情境地圖／效果／穩度／成本／邊界），順序寫死', dfl.slice(0, 7).map((l) => l.slice(0, l.indexOf('】') + 1)).join('') === '【結論】【成功率】【情境地圖】【效果】【穩度】【成本】【邊界】');
+  t('決策優先 v2：【成功率】是主敘事——場景全對（AI 評分）＋兩組原始計數與百分比', /^【成功率】場景全對（AI 評分）：帶 9\/10（90%） vs 不帶 6\/10（60%）——分母是有效 run/.test(dfl[1]));
+  t('決策優先 v2：【情境地圖】只有一題時明說畫不出高低情境，並附那題的全對率', /^【情境地圖】只有一題有資料：c-high（帶 9\/10，90%；不帶 6\/10，60%）/.test(dfl[2]));
+  t('決策優先：效果句用「N 格檢查結果」與「多過的檢查項包括」（不寫「N 項檢查」「集中在」）', /10 格檢查結果：帶 9 格（90%）vs 不帶 6 格（60%）；多過的檢查項包括 某檢查項/.test(head('【效果】')) && !/項檢查|集中在/.test(head('【效果】')));
+  t('決策優先：成本句用「場景全對（AI 評分）」，不出現「機械層全過」「判定通過」', /場景全對（AI 評分）/.test(head('【成本】')) && !/機械層全過|判定通過/.test(head('【成本】')));
+  t('決策優先：成本句帶原始金額', /帶 \$0\.020 vs 不帶 \$0\.010/.test(head('【成本】')));
+  t('決策優先：一次到位是 proxy：x/y 格式＋「非人機來回實測」字樣，且帶原始計數', /一次到位（proxy，非人機來回實測）帶 90%（proxy：9\/10） vs 不帶 60%（proxy：6\/10）/.test(head('【成本】')));
+  t('決策優先：成本行印出決策矩陣門檻字樣（≥20%、標明是經驗值）', /門檻：每次全對的成本差 ≥20% 視為顯著（經驗值，未校準）/.test(head('【成本】')));
+  t('決策優先：穩度顯示原始 k＋單臂格數，不做 k/N 比值，也沒有三級分級字樣', /要 4 個判定同時翻掉，結論才會反過來（單臂共 10 格）$/.test(head('【穩度】')) && !/k\/N|邊緣/.test(head('【穩度】')));
+  t('決策優先：【邊界】加單 skill 隔離句', /單 skill 隔離，不反映多 skill 併存時的觸發表現/.test(head('【邊界】')));
+  t('決策優先：三路線建議段（改 skill／改用法／發掘）各出一行', dfl.some((l) => l.startsWith('【建議·改 skill】')) && dfl.some((l) => l.startsWith('【建議·改用法】')) && dfl.some((l) => l.startsWith('【建議·發掘】')));
+  t('決策優先：沒有量測層問題時不出「改題目」那一行', !dfl.some((l) => l.startsWith('【建議·改題目】')));
+  const dfMd = decisionFirstMarkdown(dfRep);
+  t('決策優先 markdown：含決策摘要標題與結論行', dfMd.some((l) => l.includes('決策摘要')) && dfMd.some((l) => l.includes('【結論】')));
+}
+
+// 詞彙（正式裁定 v1.3-1）：沒有全對 run 時成本格寫「無全對 run」，不寫「無成功 run」
+{
+  const noFull = decisionFirstLines({ name: 'fx-nofull', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 3,
+    totals: { with: { pass: 3, total: 9 }, without: { pass: 3, total: 9 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 },
+    cost: { with: { runs: 3, costComplete: true, perSuccessCostUsd: null, successRuns: 0, notFirstPassRuns: 3 }, without: { runs: 3, costComplete: true, perSuccessCostUsd: 0.01, successRuns: 1, notFirstPassRuns: 2 } },
+    summary: { verdict: 'same', needFix: 'x' } });
+  const costLine = noFull.find((l) => l.startsWith('【成本】'));
+  t('詞彙：沒有全對 run 時寫「無全對 run」，不寫「無成功 run」', /帶 無全對 run vs 不帶 \$0\.010/.test(costLine) && !/無成功 run/.test(costLine));
+  t('詞彙：全對率 0/3＝0%，不因為沒有全對 run 就變成無資料', /【成功率】場景全對（AI 評分）：帶 0\/3（0%） vs 不帶 1\/3（33%）/.test(noFull[1]));
+}
+
+// B6：wins 為空時不得輸出「多過的檢查項包括 沒有特別集中的類別」這種自相矛盾句
+{
+  const noWins = decisionFirstLines({ name: 'fx-nowin', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 10,
+    totals: { with: { pass: 8, total: 10 }, without: { pass: 8, total: 10 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 },
+    cost: { with: { runs: 10 }, without: { runs: 10 } }, summary: { verdict: 'same', needFix: 'x', winsPlain: [] } });
+  const eff = noWins.find((l) => l.startsWith('【效果】'));
+  t('效果句：沒有多過的檢查項時寫「沒有多過的檢查項」，不寫「包括 沒有特別集中的類別」', /；沒有多過的檢查項$/.test(eff) && !/沒有特別集中的類別/.test(eff));
+}
+
+// 穩度：k≤2 加既定薄弱警語；k=3/5/6 都只顯示 k＋單臂格數（不做比值、不分級）；同格 run 高度相似時警語升級（不得稱穩）
+{
+  const stabBase = { name: 'fx-stab', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 10, summary: { verdict: 'better', needFix: 'x' } };
+  const mkStab = (k, extraFlags = []) => decisionFirstLines({ ...stabBase, totals: { with: { pass: 8, total: 10 }, without: { pass: 8 - k, total: 10 } }, sensitivity: { delta: k, sameDenominator: true, flipsToReverse: k }, cost: { with: { runs: 10 }, without: { runs: 10 } }, flags: extraFlags }).find((l) => l.startsWith('【穩度】'));
+  t('穩度：k=2 加「只當線索，不當定論」警語，不出現「邊緣」「穩」', /要 2 個判定同時翻掉，結論才會反過來（單臂共 10 格）——只當線索，不當定論$/.test(mkStab(2)));
+  t('穩度：k=3（舊制「邊緣」）只顯示 k＋單臂格數，沒有警語也沒有分級字樣', /要 3 個判定同時翻掉，結論才會反過來（單臂共 10 格）$/.test(mkStab(3)));
+  t('穩度：k=6（舊制「穩」）也只顯示 k＋單臂格數，不出現「穩」字樣（【穩度】標籤本身的「穩」不算）', /（單臂共 10 格）$/.test(mkStab(6)) && !/穩/.test(mkStab(6).replace(/^【穩度】/, '')));
+  t('穩度：k 可以大於單臂格數（完美分離）也照樣顯示 k，不做比值運算', (() => { const line = decisionFirstLines({ ...stabBase, totals: { with: { pass: 10, total: 10 }, without: { pass: 0, total: 10 } }, sensitivity: { delta: 10, sameDenominator: true, flipsToReverse: 11 }, cost: { with: { runs: 10 }, without: { runs: 10 } }, flags: [] }).find((l) => l.startsWith('【穩度】')); return /要 11 個判定同時翻掉/.test(line) && /（單臂共 10 格）/.test(line); })());
+  t('穩度：同格 run 高度相似時警語升級（即使 k>2，不得稱穩）', /同格 run 高度相似，有效樣本比 k 顯示的小/.test(mkStab(4, ['同格 run 高度相似：c1/with 平均相似度 0.90——有效樣本比 2 小'])));
+  t('穩度：k≤2 且同格相似同時成立，兩個警語都要出現', (() => { const line = mkStab(1, ['同格 run 高度相似：x']); return /只當線索，不當定論/.test(line) && /同格 run 高度相似/.test(line); })());
+}
+
+// 決策矩陣門檻（正式裁定 v1.3-2）：rel＝(b−a)／max(a,b)，≥20%（含邊界）＝顯著。
+// 下面這張 oracle 表是先按裁定用手算出來的（rel 欄），再拿去對實作——不是把實作的輸出抄一遍。
+// a＝帶 skill 每次全對的成本、b＝不帶。base＝max(a,b)（兩者皆 0 時取 1）。
+//   a=0.006 b=0.010 → base .010、b−a=.004 → rel=+0.40 → cheaper
+//   a=0.008 b=0.010 → base .010、b−a=.002 → rel=+0.20 → cheaper（含邊界）
+//   a=0.800 b=1.000 → base 1.00、b−a=.200 → rel=+0.20 → cheaper（浮點下原值 0.19999…，裁定是名目 20%，所以必須算顯著）
+//   a=0.0081 b=0.010 → rel=+0.19 → similar
+//   a=0.009 b=0.010 → rel=+0.10 → similar
+//   a=0.010 b=0.008 → rel=−0.20 → pricier（含邊界）
+//   a=1.000 b=0.800 → rel=−0.20 → pricier
+//   a=0.010 b=0.0081 → rel=−0.19 → similar
+//   a=0.020 b=0.010 → base .020、b−a=−.010 → rel=−0.50 → pricier
+//   a=0 b=0.010 → rel=+1.00 → cheaper
+//   a=0.010 b=0 → rel=−1.00 → pricier
+//   a=0 b=0 → 兩者皆 0，視為相當 → similar
+//   任一缺值／負值 → unknown（不進 rel）
+{
+  const ORACLE = [
+    [0.006, 0.01, 'cheaper'], [0.008, 0.01, 'cheaper'], [0.8, 1, 'cheaper'], [0.0081, 0.01, 'similar'], [0.009, 0.01, 'similar'],
+    [0.01, 0.008, 'pricier'], [1, 0.8, 'pricier'], [0.01, 0.0081, 'similar'], [0.02, 0.01, 'pricier'],
+    [0, 0.01, 'cheaper'], [0.01, 0, 'pricier'], [0, 0, 'similar'],
+    [null, 0.01, 'unknown'], [0.01, null, 'unknown'], [-0.01, 0.01, 'unknown'], [0.01, -0.01, 'unknown'],
+  ];
+  const LABEL = { cheaper: '留用（效率工具）', pricier: '建議退役（成本負擔）', similar: '建議退役', unknown: '效率未判' };
+  const sameBase = { name: 'fx-same', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }, { id: 'c2' }], runsPlanned: 5, totals: { with: { pass: 8, total: 10 }, without: { pass: 8, total: 10 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 }, summary: { verdict: 'same', needFix: '兩組差不多' } };
+  let oracleBad = 0;
+  for (const [a, b, want] of ORACLE) {
+    const line = decisionFirstLines({ ...sameBase, cost: { with: { runs: 10, costComplete: true, perSuccessCostUsd: a, successRuns: 8, notFirstPassRuns: 2 }, without: { runs: 10, costComplete: true, perSuccessCostUsd: b, successRuns: 8, notFirstPassRuns: 2 } } })[0];
+    const ok = line.includes(LABEL[want]) && (want !== 'unknown' || !/退役/.test(line)) && (want !== 'cheaper' || !/退役/.test(line));
+    if (!ok) { oracleBad++; console.log('   oracle miss:', a, b, '應為', want, '得到', line.slice(0, 60)); }
+  }
+  t(`決策矩陣門檻 oracle 表（${ORACLE.length} 列手算預期值）逐列符合`, oracleBad === 0);
+  const unknownCost = decisionFirstLines({ ...sameBase, cost: { with: { runs: 10, costComplete: false, costRecorded: 7, costTotal: 10, perSuccessCostUsd: null, successRuns: 8, notFirstPassRuns: 2 }, without: { runs: 10, costComplete: true, perSuccessCostUsd: 0.01, successRuns: 8, notFirstPassRuns: 2 } } });
+  t('決策矩陣：成本記錄不完整→「效率未判」，整份輸出禁止出現「退役」字樣', /效率未判/.test(unknownCost[0]) && !/退役/.test(unknownCost.join('')));
+}
+
+// 資料充分性 guard 分兩層（正式裁定 v1.3-5）：
+//   第一層 blocking＝兩臂根本不是同一個實驗（前置作廢、題×次不對齊、實際模型不同、有格子沒判定）→ 第一頁只出資料不足；
+//   第二層 comparability＝計分母體不一致（通常是有 run 沒過前置檢查）→ 只有【效果】【穩度】不判，【成功率】【成本】照出。
+//   gate 明確 false 的 run 是「有效但未成功」，不是作廢，**不餵 guard**；舊的 invalidRuns 欄位同樣不餵。
+{
+  const guardBase = { name: 'fx-guard', arms: ['with', 'without'], cases: [{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }], runsPlanned: 3, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 }, summary: { verdict: 'same', needFix: 'x' } };
+  const guardDisc = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 8, total: 9 } }, invalidRuns: [], harnessFailures: ['c1/with/r1', 'c1/without/r1'], discardedRunIds: ['c1/with/r1', 'c1/without/r1'], cost: { with: { runs: 9 }, without: { runs: 9 } } });
+  t('guard（第一層）：兩組各有一次前置作廢、總格數剛好相同，仍判資料不足', /資料不足/.test(guardDisc[0]) && /執行／評分失敗/.test(guardDisc[0]) && !/需要改進|可留用|建議退役|效率工具/.test(guardDisc[0]) && /【穩度】資料不足/.test(guardDisc[4]) && /【成本】資料不足/.test(guardDisc[5]));
+  const guardInvalidOnly = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: ['c1/with/r1', 'c1/without/r1'], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 9 } } });
+  t('guard：舊的 invalidRuns（gate 明確 false）不餵 guard——有它照樣下結論，不變成資料不足', !/資料不足/.test(guardInvalidOnly[0]));
+  const guardRuns = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 6 } } });
+  t('guard（第一層）：實跑次數與計畫不同（一臂少跑）判資料不足', /資料不足/.test(guardRuns[0]) && /實跑次數與計畫不同/.test(guardRuns[0]));
+  const guardKeys = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 9 } }, runKeys: { c1: { with: ['r1', 'r2', 'r3'], without: ['r1', 'r2', 'r3'] }, c2: { with: ['r1', 'r2', 'r3', 'r4'], without: ['r1', 'r2'] }, c3: { with: ['r1', 'r2'], without: ['r1', 'r2', 'r3', 'r4'] } } });
+  t('guard（第一層）：兩組總次數相同但逐題分布不同（題×次不對齊）判資料不足', /資料不足/.test(guardKeys[0]) && /題×次不對齊/.test(guardKeys[0]));
+  const guardModels = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9, models: ['m1'] }, without: { runs: 9, models: ['m2'] } } });
+  t('guard（第一層）：兩組實際跑的模型不同判資料不足', /資料不足/.test(guardModels[0]) && /實際跑的模型不同/.test(guardModels[0]));
+  const guardNull = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 9 } }, assertions: { 'fact-a': { family: 'fact', arms: { with: { pass: 3, total: 3, eligible: 3 }, without: { pass: 2, total: 2, eligible: 3 } } } } });
+  t('guard（第一層）：有格子沒拿到判定（評分回 null）判資料不足', /資料不足/.test(guardNull[0]) && /沒拿到判定/.test(guardNull[0]));
+  const guardCross = decisionFirstLines({ ...guardBase, totals: { with: { pass: 6, total: 9 }, without: { pass: 6, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 9 } }, assertions: { 'fact-a': { family: 'fact', arms: { with: { pass: 3, total: 3, eligible: 3 }, without: { pass: 0, total: 0 } } }, 'fact-b': { family: 'fact', arms: { with: { pass: 0, total: 0 } , without: { pass: 3, total: 3, eligible: 3 } } } } });
+  t('guard（第二層）：兩臂各自漏掉不同檢查項、總格數仍相同→逐條母體不同，效果與穩度不判', /效果先不判/.test(guardCross[0]) && /逐條檢查項的判定母體不同/.test(guardCross.find((l) => l.startsWith('【效果】'))) && /【穩度】兩組計分母體不一致/.test(guardCross.find((l) => l.startsWith('【穩度】'))));
+  const guardPop = decisionFirstLines({ ...guardBase, totals: { with: { pass: 5, total: 8 }, without: { pass: 5, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9, successRuns: 5, notFirstPassRuns: 4 }, without: { runs: 9, successRuns: 6, notFirstPassRuns: 3 } } });
+  t('guard（第二層）：計分母體格數不同→效果不判，但【成功率】【成本】照出（不是整頁資料不足）', /效果先不判/.test(guardPop[0]) && !/^【成功率】資料不足/.test(guardPop[1]) && /帶 5\/9（56%） vs 不帶 6\/9（67%）/.test(guardPop[1]));
+  const guardOk = decisionFirstLines({ ...guardBase, totals: { with: { pass: 8, total: 9 }, without: { pass: 7, total: 9 } }, invalidRuns: [], harnessFailures: [], discardedRunIds: [], cost: { with: { runs: 9 }, without: { runs: 9 } } });
+  t('guard：資料齊全時不觸發（對照組，確保 guard 沒有過度觸發）', !/資料不足|效果先不判/.test(guardOk[0]));
+}
+
+// 第三臂（一句提醒等）逐臂獨立驗、獨立標註，不影響被比較的兩臂（正式裁定 v1.3-4）
+{
+  const threeBase = { name: 'fx-three', arms: ['with', 'without', 'reminder'], cases: [{ id: 'c1' }, { id: 'c2' }], runsPlanned: 3, invalidRuns: [], harnessFailures: [], discardedRunIds: [],
+    totals: { with: { pass: 5, total: 6 }, without: { pass: 3, total: 6 } }, sensitivity: { delta: 2, sameDenominator: true, flipsToReverse: 3 }, summary: { verdict: 'better', needFix: 'x' } };
+  const shortThird = decisionFirstLines({ ...threeBase, cost: { with: { runs: 6, successRuns: 5, notFirstPassRuns: 1 }, without: { runs: 6, successRuns: 3, notFirstPassRuns: 3 }, reminder: { runs: 2, successRuns: 1, notFirstPassRuns: 1 } } });
+  t('三臂：第三臂少跑不擋主比較（主結論照出）', !/資料不足/.test(shortThird[0]) && /可留用/.test(shortThird[0]));
+  t('三臂：第三臂少跑要獨立標註「本臂資料不足」', /【第三組】reminder：本臂資料不足（實跑 2 次、計畫 6 次），不進主比較/.test(shortThird.find((l) => l.startsWith('【第三組】'))));
+  const badThird = decisionFirstLines({ ...threeBase, harnessFailures: ['c1/reminder/r1'], discardedRunIds: ['c1/reminder/r1'], cost: { with: { runs: 6, successRuns: 5, notFirstPassRuns: 1 }, without: { runs: 6, successRuns: 3, notFirstPassRuns: 3 }, reminder: { runs: 6, successRuns: 3, notFirstPassRuns: 3 } } });
+  t('三臂：第三臂有前置作廢也不擋主比較，只標在第三組那一行', !/資料不足/.test(badThird[0]) && /【第三組】reminder：本臂資料不足（有 1 次前置作廢）/.test(badThird.find((l) => l.startsWith('【第三組】'))));
+  const okThird = decisionFirstLines({ ...threeBase, cost: { with: { runs: 6, successRuns: 5, notFirstPassRuns: 1 }, without: { runs: 6, successRuns: 3, notFirstPassRuns: 3 }, reminder: { runs: 6, successRuns: 4, notFirstPassRuns: 2 } } });
+  t('三臂：第三臂資料齊全時報它自己的全對率', /【第三組】reminder：場景全對 4\/6（67%）/.test(okThird.find((l) => l.startsWith('【第三組】'))));
+}
+
+// STOP：不得寫「只跑了基準組」，改「未完成同題組同次數的兩臂成本比較」；「成本臂」字樣改「完整兩臂成本比較」；
+// 引擎停案後帶 skill 那組仍可能有安全探針等部分資料，這種情況要點出「不是完整比較」；停案屬量測層問題→出「改題目」建議
+{
+  const dfStop = decisionFirstLines({ name: 'fx-stop', arms: ['with', 'without'], baseline: { arm: 'without', verdict: 'STOP', note: '基準組每次都過。能力上不需要；效率價值未判——要判，加跑完整兩臂成本比較。' }, summary: { helped: '基準組每次都做對。' } });
+  const pick = (tag) => dfStop.find((l) => l.startsWith(tag)) || '';
+  t('決策優先：停案時結論沿用停案措辭、成本行標「效率價值未判」', pick('【結論】').includes('效率價值未判') && pick('【成本】').includes('效率價值未判'));
+  t('決策優先：停案時七行齊全（含成功率與情境地圖），且都改「未完成同題組同次數的兩臂…」措辭', ['【結論】', '【成功率】', '【情境地圖】', '【效果】', '【穩度】', '【成本】', '【邊界】'].every((tag) => pick(tag)) && /未完成同題組同次數的兩臂比較/.test(pick('【成功率】')) && /未完成同題組同次數的兩臂比較/.test(pick('【情境地圖】')));
+  t('決策優先：停案時不寫「只跑了基準組」「成本臂」', !/只跑了基準組/.test(dfStop.join('')) && !/成本臂/.test(dfStop.join('')));
+  t('決策優先：停案＝量測層問題→出「改題目」建議，三路線退誠實句', /【建議·改題目】/.test(dfStop.join('\n')) && /【建議·改 skill】未完成同題組同次數的兩臂比較/.test(dfStop.find((l) => l.startsWith('【建議·改 skill】'))));
+  const dfStopPartial = decisionFirstLines({ name: 'fx-stop2', arms: ['with', 'without'], baseline: { arm: 'without', verdict: 'STOP', note: '基準組每次都過。' }, summary: { helped: '基準組每次都做對。' }, cost: { with: { runs: 3 } } });
+  t('決策優先：停案後帶 skill 那組仍有部分資料（安全探針）時，穩度行要點出不是完整比較', /帶 skill 那組另有 3 次部分資料/.test(dfStopPartial.find((l) => l.startsWith('【穩度】'))) && /不是完整的兩臂比較/.test(dfStopPartial.find((l) => l.startsWith('【穩度】'))));
+}
+
+// 零鑑別（量測層問題）→ 建議段要出「改題目」那一行
+{
+  const zeroDisc = decisionFirstLines({ name: 'fx-zero', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 3,
+    totals: { with: { pass: 3, total: 3 }, without: { pass: 3, total: 3 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 },
+    cost: { with: { runs: 3 }, without: { runs: 3 } }, flags: ['零鑑別：fact-a 兩組全過——測不出差別'], summary: { verdict: 'same', needFix: 'x' } });
+  t('建議段：有零鑑別旗標時出「改題目」那一行（量測層問題不跟三路線混）', /【建議·改題目】量測層的問題要先修：1 條檢查兩組全過（零鑑別）/.test(zeroDisc.find((l) => l.startsWith('【建議·改題目】'))));
+}
 
 // 觸發彙整：逐 query 多數決；該觸發有觸發＝過、不該觸發沒觸發＝過
 const rows = [
@@ -158,7 +345,7 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   t('buildPreview：checks 含 prereg-exists 且 ok=false', pv.checks.find((c) => c.id === 'prereg-exists')?.ok === false);
 }
 
-// 摘要結論（給人看的一頁）：不出現 id、贏輸挑對、主句數字對、停案句、第三組措辭
+// 原始摘要（深究用；report.summary 由 plainSummary 產生）：不出現 id、贏輸挑對、主句數字對、停案句、第三組措辭
 {
   const rep = { name: 'fx', arms: ['with', 'without', 'reminder'], runsPlanned: 3, baseline: { arm: 'without', verdict: 'CONTINUE' }, cases: [{ id: 'c1' }, { id: 'c2' }],
     totals: { with: { pass: 10, total: 12 }, without: { pass: 7, total: 12 }, reminder: { pass: 6, total: 12 } },
@@ -176,8 +363,353 @@ t('能說／不能說：都找不到回 null', extractSayNotSay('# 標題\n沒�
   t('摘要：停案句', stop.verdict === 'stop' && /測不出 skill 的貢獻/.test(stop.helped));
   t('assertionLabel：label 優先；沒有就取首子句、超長截在頓號', assertionLabel({ label: 'L', text: 'T' }) === 'L' && assertionLabel({ text: '技術名詞與檔名／測試名（`fixture`）仍出現' }) === '技術名詞與檔名／測試名' && /…$/.test(assertionLabel({ text: '抽象英文詞 hypothesis、falsified、root cause、state leakage、measure、next action 沒有原文照抄' })));
   const R = await import('./render.mjs');
-  const h = R.renderReportHtml({ ...rep, summary: sm, generatedAt: 'T', cost: {}, similarity: [], runs: [], sensitivity: { delta: 3, flipsToErase: 3, flipsToReverse: 4, note: '' }, lock: { ok: true, lockedAt: 'L' } }, {});
-  t('render：摘要結論是第一個區塊、含四問（優點在哪／缺點在哪／該怎麼改）', h.indexOf('摘要結論') < h.indexOf('先看這裡') && /有沒有幫上忙/.test(h) && /優點在哪/.test(h) && !/贏在哪/.test(h));
+  // 含 decisionFirst 的真實 report 形狀（08-19 codex 複核 5.2：HTML 測試樣本要含 decisionFirst，才驗證得到新區塊真的排第一）
+  const repWithCost = { ...rep, cost: { with: { runs: 6 }, without: { runs: 6 }, reminder: { runs: 6 } } };
+  const decisionFirst = decisionFirstLines(repWithCost);
+  t('decisionFirstLines 對這份真實 report 形狀能算出完整版型（不缺欄位炸掉）：七行固定＋三路線建議', decisionFirst.length >= 10 && ['【結論】', '【成功率】', '【情境地圖】', '【效果】', '【穩度】', '【成本】', '【邊界】', '【建議·改 skill】', '【建議·改用法】', '【建議·發掘】'].every((tag) => decisionFirst.some((l) => l.startsWith(tag))));
+  const h = R.renderReportHtml({ ...repWithCost, summary: sm, decisionFirst, generatedAt: 'T', similarity: [], runs: [], sensitivity: { delta: 3, flipsToErase: 3, flipsToReverse: 4, note: '' }, lock: { ok: true, lockedAt: 'L' } }, {});
+  t('render：決策摘要排在最前，原始摘要（深究用）在其後、先看這裡在更後（含四問：優點在哪／缺點在哪／該怎麼改）',
+    h.indexOf('決策摘要') >= 0 && h.indexOf('決策摘要') < h.indexOf('原始摘要（深究用）') && h.indexOf('原始摘要（深究用）') < h.indexOf('先看這裡') && /有沒有幫上忙/.test(h) && /優點在哪/.test(h) && !/贏在哪/.test(h));
+  t('render：原始摘要（深究用）區塊仍完整保留在決策摘要之後（沒有被拿掉，只是不再排第一）', /有沒有幫上忙/.test(h.slice(h.indexOf('原始摘要（深究用）'))));
+}
+
+// buildReport 聚合層整合測試（fixture 型，08-19 codex 複核 5.1 必改）：
+// 直接在磁碟寫 meta.json／grading.json／output.md，跑真正的 buildReport，驗證六種 run 的成本層分類，
+// 以及分類「不影響」既有計分（totals）——這是 AC「分類前後 totals／summary 不變」的回歸證明。
+{
+  const writeRunFixture = (outDir, caseId, armName, rk, meta, grading) => {
+    const runDir = path.join(outDir, 'runs', caseId, armName, `r${rk}`);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'output.md'), '受測產出\n');
+    fs.writeFileSync(path.join(runDir, 'meta.json'), JSON.stringify(meta, null, 2));
+    if (grading) fs.writeFileSync(path.join(runDir, 'grading.json'), JSON.stringify(grading, null, 2));
+  };
+  const baseMeta = (extra) => ({ case: extra.case, arm: extra.arm, run: 1, sandbox: 'sb', ok: true, timedOut: false, exitCode: 0, startedAt: 't', executorModel: null, effort: null, durationMs: 1000, outputTokens: 50, inputTokens: 100, costUsd: 0.01, models: ['m'], mainModel: 'm', numTurns: 1, skillFired: null, toolNames: [], artifacts: [], ...extra });
+  const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-buildreport-'));
+  const cfgA = {
+    __dir: '/nonexistent-sg-buildreport-dir', __file: '/nonexistent-sg-buildreport-dir/gauge.json', name: 'fx-buildreport', runs: 1,
+    arms: [{ name: 'with', skill: true }, { name: 'without', skill: false }],
+    assertions: [{ id: 'gate-a', family: 'gate', text: 'gate a' }, { id: 'fact-x', family: 'fact', text: 'fact x' }],
+    cases: [
+      { id: 'succ', type: null, assertions: ['gate-a', 'fact-x'] },
+      { id: 'gatefalse', type: null, assertions: ['gate-a', 'fact-x'] },
+      { id: 'gatenull', type: null, assertions: ['gate-a', 'fact-x'] },
+      { id: 'nogate', type: null, assertions: ['fact-x'] },
+      { id: 'metafail', type: null, assertions: ['gate-a', 'fact-x'] },
+      { id: 'nogradefile', type: null, assertions: ['gate-a', 'fact-x'] },
+    ],
+  };
+  // 1. 成功：gate-a 明確 pass=true
+  writeRunFixture(bdir, 'succ', 'with', 1, baseMeta({ case: 'succ', arm: 'with', costUsd: 0.01 }), { case: 'succ', arm: 'with', run: 'r1', judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: false, verdicts: [{ id: 'gate-a', pass: true, evidence: 'e' }, { id: 'fact-x', pass: true, evidence: 'e' }] });
+  // 2. 有效但未成功：gate-a 明確 pass=false（既有 gateFailed／invalid 分類）
+  writeRunFixture(bdir, 'gatefalse', 'with', 1, baseMeta({ case: 'gatefalse', arm: 'with', costUsd: 0.02 }), { case: 'gatefalse', arm: 'with', run: 'r1', judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: true, verdicts: [{ id: 'gate-a', pass: false, evidence: 'e' }, { id: 'fact-x', pass: true, evidence: 'e' }] });
+  // 3. 無法判定：gate-a 回 null（沒失敗也沒全過）
+  writeRunFixture(bdir, 'gatenull', 'with', 1, baseMeta({ case: 'gatenull', arm: 'with', costUsd: 0.03 }), { case: 'gatenull', arm: 'with', run: 'r1', judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: false, verdicts: [{ id: 'gate-a', pass: null, evidence: '判不出來' }, { id: 'fact-x', pass: true, evidence: 'e' }] });
+  // 4. 無法判定：這題沒有 gate 斷言
+  writeRunFixture(bdir, 'nogate', 'with', 1, baseMeta({ case: 'nogate', arm: 'with', costUsd: 0.015 }), { case: 'nogate', arm: 'with', run: 'r1', judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: false, verdicts: [{ id: 'fact-x', pass: false, evidence: 'e' }] });
+  // 5. 前置作廢：meta 失敗（執行失敗；grading 仍寫 harnessFailure，跟既有 gradeAll 行為一致）——花費仍記，成本入分子
+  writeRunFixture(bdir, 'metafail', 'with', 1, baseMeta({ case: 'metafail', arm: 'with', ok: false, exitCode: 1, costUsd: 0.05 }), { case: 'metafail', arm: 'with', run: 'r1', harnessFailure: true, verdicts: [] });
+  // 6. 前置作廢：缺 grading（grade 步驟還沒跑）——花費仍記，成本入分子
+  writeRunFixture(bdir, 'nogradefile', 'with', 1, baseMeta({ case: 'nogradefile', arm: 'with', costUsd: 0.025 }), null);
+
+  const repA = buildReport(cfgA, bdir);
+  const cw = repA.cost.with;
+  // 場景全對制的已知答案（先按定義手推，再對實作）：
+  //   succ        gate=true、fact=true            → 全部預期檢查明確 pass → 場景全對
+  //   gatefalse   gate=false、fact=true           → 有一條明確 false      → 有效但未成功
+  //   gatenull    gate=null、fact=true            → 沒有明確 false、有 null → 無法判定
+  //   nogate      （只有 fact）fact=false          → 有一條明確 false      → 有效但未成功（舊制是「沒有 gate＝無法判定」，語義改版後改這裡）
+  //   metafail    meta.ok=false                   → 前置作廢
+  //   nogradefile 缺 grading.json                 → 前置作廢
+  //   ⇒ 全對 1、有效但未成功 2、無法判定 1、前置作廢 2；全對率＝1/(1+2)=1/3
+  t('buildReport 分類：場景全對 1（succ）', cw.successRuns === 1);
+  t('buildReport 分類：有效但未成功 2（gatefalse 的 gate 明確 false；nogate 的 fact 明確 false）', cw.notFirstPassRuns === 2);
+  t('buildReport 分類：無法判定 1（gatenull：沒有明確 false、但 gate 回 null）', cw.indeterminateRuns === 1);
+  t('buildReport 分類：前置作廢 2（metafail、nogradefile）', cw.discardedRuns === 2);
+  t('buildReport 分類：discardedRunIds 只裝前置作廢，不含 gate 明確 false 的 run（B1）', repA.discardedRunIds.length === 2 && repA.discardedRunIds.every((x) => /metafail|nogradefile/.test(x)) && repA.invalidRuns.some((x) => /gatefalse/.test(x)));
+  t('buildReport 成本：Σ costUsd 含作廢與失敗＝0.15，6 個 run 全部有記錄→ complete', Math.abs(cw.sumCostUsd - 0.15) < 1e-9 && cw.costRecorded === 6 && cw.costTotal === 6 && cw.costComplete === true);
+  t('buildReport 成本：每次全對的成本＝0.15/1=0.15、每過格成本＝0.15/2=0.075、全對率＝1/(1+2)=1/3', Math.abs(cw.perSuccessCostUsd - 0.15) < 1e-9 && Math.abs(cw.perPassedCheckCostUsd - 0.075) < 1e-9 && Math.abs(cw.firstPassRate - 1 / 3) < 1e-9);
+  t('buildReport 分類不影響計分（AC-2 回歸）：totals 只由既有 fact/judgment 記分邏輯決定＝2/3（succ 過、gatenull 過、nogate 不過；gatefalse 因 gateFailed continue 不進計分）', repA.totals.with.pass === 2 && repA.totals.with.total === 3);
+  t('buildReport 成本：完全沒有 run 的臂（without）→ 空集合回 null，不是 0（AC-1「空集合絕不算 0」）', repA.cost.without.sumCostUsd === null && repA.cost.without.costRecorded === 0 && repA.cost.without.costTotal === 0 && repA.cost.without.successRuns === 0);
+  {
+    const R = await import('./render.mjs');
+    const hCost = R.renderReportHtml(repA, {});
+    t('render 深究成本表：呈現分類（場景全對／有效但未成功／無法判定／前置作廢）與每格派生成本、一次到位 proxy', /深究：成本派生欄/.test(hCost) && /場景全對（AI 評分）/.test(hCost) && /有效但未成功/.test(hCost) && /無法判定/.test(hCost) && /前置作廢/.test(hCost) && /proxy：1\/3/.test(hCost));
+  }
+  fs.rmSync(bdir, { recursive: true, force: true });
+}
+
+// buildReport 缺值路徑（部分缺）整合測試：兩個 run 都場景全對，但其中一個沒記到 costUsd——
+// 總成本／兩個 USD 派生欄都要回不完整，但一次到位率（只跟 gate 分類有關）不受影響，totals 也不受影響
+{
+  const writeRunFixture = (outDir, caseId, armName, rk, meta, grading) => {
+    const runDir = path.join(outDir, 'runs', caseId, armName, `r${rk}`);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'output.md'), '受測產出\n');
+    fs.writeFileSync(path.join(runDir, 'meta.json'), JSON.stringify(meta, null, 2));
+    fs.writeFileSync(path.join(runDir, 'grading.json'), JSON.stringify(grading, null, 2));
+  };
+  const bdir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-buildreport-partial-'));
+  const cfgB = {
+    __dir: '/nonexistent-sg-buildreport-partial-dir', __file: '/nonexistent-sg-buildreport-partial-dir/gauge.json', name: 'fx-partial', runs: 1,
+    arms: [{ name: 'with', skill: true }, { name: 'without', skill: false }],
+    assertions: [{ id: 'gate-b', family: 'gate', text: 'gate b' }, { id: 'fact-y', family: 'fact', text: 'fact y' }],
+    cases: [{ id: 'p1', type: null, assertions: ['gate-b', 'fact-y'] }, { id: 'p2', type: null, assertions: ['gate-b', 'fact-y'] }],
+  };
+  const mk2 = (c, cost) => ({ case: c, arm: 'with', run: 1, sandbox: 'sb', ok: true, timedOut: false, exitCode: 0, startedAt: 't', executorModel: null, effort: null, durationMs: 500, outputTokens: 10, inputTokens: 20, costUsd: cost, models: ['m'], mainModel: 'm', numTurns: 1, skillFired: null, toolNames: [], artifacts: [] });
+  const grading2 = (c) => ({ case: c, arm: 'with', run: 'r1', judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: false, verdicts: [{ id: 'gate-b', pass: true, evidence: 'e' }, { id: 'fact-y', pass: true, evidence: 'e' }] });
+  writeRunFixture(bdir2, 'p1', 'with', 1, mk2('p1', 0.02), grading2('p1'));
+  writeRunFixture(bdir2, 'p2', 'with', 1, mk2('p2', null), grading2('p2')); // 缺 costUsd
+
+  const repB = buildReport(cfgB, bdir2);
+  const cwB = repB.cost.with;
+  t('buildReport 缺值（部分）：總成本回 null，誠實回報 recorded=1/total=2', cwB.sumCostUsd === null && cwB.costRecorded === 1 && cwB.costTotal === 2 && cwB.costComplete === false);
+  t('buildReport 缺值（部分）：兩個 USD 派生欄都回 null（不冒充只算那筆 0.02 的完整數字）', cwB.perSuccessCostUsd === null && cwB.perPassedCheckCostUsd === null);
+  t('buildReport 缺值（部分）：一次到位率不受成本缺值影響，仍算得出 2/(2+0)=1（跟 gate 分類無關）', Math.abs(cwB.firstPassRate - 1) < 1e-9 && cwB.successRuns === 2 && cwB.notFirstPassRuns === 0);
+  t('buildReport 缺值（部分）：totals 不受成本缺值影響＝2/2', repB.totals.with.pass === 2 && repB.totals.with.total === 2);
+  t('buildReport 缺值（部分）：report.flags 標「成本記錄不完整」（AC-1 要求 report 要標 recorded/total）', repB.flags.some((f) => /成本記錄不完整：with（1\/2）/.test(f)));
+  fs.rmSync(bdir2, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// 管線級已知答案測試（08-19 codex 第二輪 B9／裁定 v1.3-6）：
+// 真的寫 meta.json／grading.json 到磁碟 → buildReport → decisionFirstLines → reportMarkdown／renderReportHtml，
+// 每一條都先按定義手推預期值（寫在註解），再拿去對實作；不是把實作的輸出抄成斷言。
+// ---------------------------------------------------------------------------
+{
+  const R = await import('./render.mjs');
+  const tmpDirs = [];
+  const mkRun = (outDir, caseId, arm, rk, meta, grading) => {
+    const runDir = path.join(outDir, 'runs', caseId, arm, rk);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'output.md'), `受測產出 ${caseId}/${arm}/${rk}\n`); // 逐 run 不同：避免觸發「同格 run 高度相似」旗標
+    fs.writeFileSync(path.join(runDir, 'meta.json'), JSON.stringify(meta, null, 2));
+    if (grading) fs.writeFileSync(path.join(runDir, 'grading.json'), JSON.stringify(grading, null, 2));
+  };
+  const META = (o) => ({ case: o.case, arm: o.arm, run: 1, sandbox: 'sb', ok: true, timedOut: false, exitCode: 0, startedAt: 't', executorModel: null, effort: null, durationMs: 1000, outputTokens: 50, inputTokens: 100, costUsd: 0.01, models: ['m'], mainModel: 'm', numTurns: 1, skillFired: null, toolNames: [], artifacts: [], ...o });
+  const GRADE = (caseId, arm, rk, verdicts, o = {}) => ({ case: caseId, arm, run: rk, judgeModel: 'j', harnessFailure: false, missing: [], gateFailed: verdicts.some((v) => /^gate/.test(v.id) && v.pass === false), verdicts, ...o });
+  // spec：{ caseId: { arm: [ [verdicts, metaOverride] , … ] } }
+  const buildFixture = (tag, cfgBase, spec) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `sg-pipe-${tag}-`));
+    tmpDirs.push(dir);
+    for (const [caseId, byArm] of Object.entries(spec)) {
+      for (const [arm, runs] of Object.entries(byArm)) {
+        runs.forEach((entry, i) => {
+          const [verdicts, metaOver = {}, gradeOver = {}] = entry;
+          const rk = `r${i + 1}`;
+          mkRun(dir, caseId, arm, rk, META({ case: caseId, arm, run: i + 1, ...metaOver }), verdicts === null ? { case: caseId, arm, run: rk, harnessFailure: true, verdicts: [] } : GRADE(caseId, arm, rk, verdicts, gradeOver));
+        });
+      }
+    }
+    const cfg = { __dir: `/nonexistent-sg-pipe-${tag}`, __file: `/nonexistent-sg-pipe-${tag}/gauge.json`, ...cfgBase };
+    return buildReport(cfg, dir);
+  };
+  const V = (id, pass) => ({ id, pass, evidence: 'e' });
+  const twoArms = [{ name: 'with', skill: true }, { name: 'without', skill: false }];
+
+  // --- B1 管線級：一臂有 gate 明確 false 的 run ---
+  // 手推：with＝c1 全對、c2 gate false（有效但未成功）→ 全對 1/2＝50%；without＝c1 全對、c2 fact false → 1/2＝50%。
+  //       前置作廢 0 ⇒ 第一層 guard 不擋；計分母體 with 1 格（c2 沒進計分）、without 2 格 ⇒ 第二層說「效果先不判」。
+  //       關鍵：整頁不得變成「資料不足」，全對率要正常顯示非 100%。
+  {
+    const cfgG = { name: 'fx-gatefalse', runs: 1, arms: twoArms,
+      assertions: [{ id: 'gate-g', family: 'gate', text: 'gate g' }, { id: 'fact-f', family: 'fact', text: 'fact f', label: '事實 f' }],
+      cases: [{ id: 'c1', assertions: ['gate-g', 'fact-f'] }, { id: 'c2', assertions: ['gate-g', 'fact-f'] }] };
+    const rep = buildFixture('gatefalse', cfgG, {
+      c1: { with: [[[V('gate-g', true), V('fact-f', true)]]], without: [[[V('gate-g', true), V('fact-f', true)]]] },
+      c2: { with: [[[V('gate-g', false), V('fact-f', true)]]], without: [[[V('gate-g', true), V('fact-f', false)]]] },
+    });
+    t('B1 管線：gate 明確 false 只算「有效但未成功」，不進 discardedRunIds', rep.cost.with.notFirstPassRuns === 1 && rep.cost.with.discardedRuns === 0 && rep.discardedRunIds.length === 0 && rep.invalidRuns.length === 1);
+    const df = rep.decisionFirst;
+    t('B1 管線：有 gate-false run 時第一頁不是「資料不足」', !/資料不足/.test(df.join('')));
+    t('B1 管線：全對率正常顯示非 100%（帶 1/2＝50%、不帶 1/2＝50%）', /【成功率】場景全對（AI 評分）：帶 1\/2（50%） vs 不帶 1\/2（50%）/.test(df[1]));
+    t('B1 管線：一次到位 proxy 也顯示非 100%', /一次到位（proxy，非人機來回實測）帶 50%（proxy：1\/2） vs 不帶 50%（proxy：1\/2）/.test(df.find((l) => l.startsWith('【成本】'))));
+    t('B1 管線：計分母體不同時只讓效果與穩度不判，不擋整頁', /效果先不判/.test(df[0]) && /不比格數/.test(df.find((l) => l.startsWith('【效果】'))));
+    // 分類不影響計分（回歸）：gate 明確 false 的 run 照舊不進 totals——語義改版只動成本層分類，不動計分
+    t('B1 管線：成本層分類不影響計分（totals 仍照既有規則：with 1/1、without 1/2）', rep.totals.with.pass === 1 && rep.totals.with.total === 1 && rep.totals.without.pass === 1 && rep.totals.without.total === 2);
+    const md = reportMarkdown(cfgG, rep), h = R.renderReportHtml(rep, {});
+    t('B1 管線：Markdown／HTML 全鏈都帶上同一組決策摘要句', md.includes('## 決策摘要') && md.includes('【成功率】場景全對（AI 評分）：帶 1/2（50%）') && h.includes('決策摘要') && h.includes('帶 1/2（50%）'));
+  }
+
+  // --- B2 管線級：crossed-null（評分回 null，格子沒判定）---
+  // 手推：with 的 c1 fact-f 回 null → 該格沒進 perAssertion，但那個 run 進得了計分（gate 過）⇒ eligible=2、total=1 ⇒ 第一層 guard 擋。
+  {
+    const cfgN = { name: 'fx-null', runs: 1, arms: twoArms,
+      assertions: [{ id: 'gate-g', family: 'gate', text: 'gate g' }, { id: 'fact-f', family: 'fact', text: 'fact f' }],
+      cases: [{ id: 'c1', assertions: ['gate-g', 'fact-f'] }, { id: 'c2', assertions: ['gate-g', 'fact-f'] }] };
+    const rep = buildFixture('null', cfgN, {
+      c1: { with: [[[V('gate-g', true), V('fact-f', null)]]], without: [[[V('gate-g', true), V('fact-f', true)]]] },
+      c2: { with: [[[V('gate-g', true), V('fact-f', true)]]], without: [[[V('gate-g', true), V('fact-f', true)]]] },
+    });
+    t('B2 管線：逐 assertion 記下應計格數（eligible），null 那格算得出洞', rep.assertions['fact-f'].arms.with.eligible === 2 && rep.assertions['fact-f'].arms.with.total === 1);
+    t('B2 管線：有格子沒拿到判定→第一頁判資料不足（不是照樣下結論）', /資料不足/.test(rep.decisionFirst[0]) && /沒拿到判定/.test(rep.decisionFirst[0]));
+    t('B2 管線：null 判定的 run 算「無法判定」，不算全對也不算未成功', rep.cost.with.indeterminateRuns === 1 && rep.cost.with.successRuns === 1 && rep.cost.with.notFirstPassRuns === 0);
+  }
+
+  // --- B3 管線級：兩組實際跑的模型不同 ---
+  {
+    const cfgM = { name: 'fx-models', runs: 1, arms: twoArms,
+      assertions: [{ id: 'fact-f', family: 'fact', text: 'fact f' }],
+      cases: [{ id: 'c1', assertions: ['fact-f'] }, { id: 'c2', assertions: ['fact-f'] }] };
+    const rep = buildFixture('models', cfgM, {
+      c1: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', true)], { mainModel: 'm2', models: ['m2'] }]] },
+      c2: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', false)], { mainModel: 'm2', models: ['m2'] }]] },
+    });
+    t('B3 管線：兩組實際跑的模型不同→資料不足（不比）', /資料不足/.test(rep.decisionFirst[0]) && /實際跑的模型不同/.test(rep.decisionFirst[0]));
+  }
+
+  // --- B4 管線級：第三臂完全少跑，不擋主比較 ---
+  // 手推：主比較兩臂各 2 次齊全；reminder 只跑 c1（1 次，計畫 2 次）⇒ 主結論照出、第三組獨立標「本臂資料不足」。
+  {
+    const cfg3 = { name: 'fx-third', runs: 1, arms: [...twoArms, { name: 'reminder', skillPath: 'x' }],
+      assertions: [{ id: 'fact-f', family: 'fact', text: 'fact f', label: '事實 f' }],
+      cases: [{ id: 'c1', assertions: ['fact-f'] }, { id: 'c2', assertions: ['fact-f'] }] };
+    const rep = buildFixture('third', cfg3, {
+      c1: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', false)]]], reminder: [[[V('fact-f', true)]]] },
+      c2: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', false)]]] },
+    });
+    const df = rep.decisionFirst;
+    t('B4 管線：第三臂少跑不擋主比較', !/資料不足/.test(df[0]) && /【成功率】場景全對（AI 評分）：帶 2\/2（100%） vs 不帶 0\/2（0%）/.test(df[1]));
+    t('B4 管線：第三臂獨立標註「本臂資料不足」', /【第三組】reminder：本臂資料不足（實跑 1 次、計畫 2 次），不進主比較/.test(df.find((l) => l.startsWith('【第三組】'))));
+  }
+
+  // --- B8／C4 管線級：token 部分缺值、USD 極小值、0 成本邊界、負成本 ---
+  {
+    const cfgT = { name: 'fx-tok', runs: 1, arms: twoArms,
+      assertions: [{ id: 'fact-f', family: 'fact', text: 'fact f' }],
+      cases: [{ id: 'c1', assertions: ['fact-f'] }, { id: 'c2', assertions: ['fact-f'] }] };
+    // token 部分缺：with 的第二個 run 沒記 inputTokens ⇒ 總和回 null、recorded/total＝1/2；中位數仍算得出來
+    const repTok = buildFixture('tok', cfgT, {
+      c1: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', true)]]] },
+      c2: { with: [[[V('fact-f', true)], { inputTokens: null }]], without: [[[V('fact-f', true)]]] },
+    });
+    t('B9 管線：token 部分缺值→總和回 null、recorded/total 誠實回報 1/2（不冒充完整）', repTok.cost.with.sumInputTokens === null && repTok.cost.with.inputTokensRecorded === 1 && repTok.cost.with.inputTokensTotal === 2 && repTok.cost.without.sumInputTokens === 200);
+    t('B9 管線：Markdown 深究成本表把 token 不完整寫出來（跟 HTML 同一套說法）', /記錄不完整（1\/2）/.test(reportMarkdown(cfgT, repTok)) && /記錄不完整（1\/2）/.test(R.renderReportHtml(repTok, {})));
+    t('B7 管線：門檻寫進 report（可機讀）＋決策摘要／Markdown／HTML 三處都印出門檻字樣', repTok.costFlow.threshold === 0.2 && /≥20% 視為顯著（經驗值，未校準）/.test(repTok.costFlow.note) && [repTok.decisionFirst.join(''), reportMarkdown(cfgT, repTok), R.renderReportHtml(repTok, {})].every((x) => /≥20% 視為顯著（經驗值，未校準）/.test(x)));
+    // USD 極小值：with 每次 5e-8（2 次共 1e-7、全對 1 次 → 每次全對 1e-7）、without 每次 1e-7（共 2e-7 → 2e-7）
+    const repTiny = buildFixture('tiny', cfgT, {
+      c1: { with: [[[V('fact-f', true)], { costUsd: 5e-8 }]], without: [[[V('fact-f', true)], { costUsd: 1e-7 }]] },
+      c2: { with: [[[V('fact-f', false)], { costUsd: 5e-8 }]], without: [[[V('fact-f', false)], { costUsd: 1e-7 }]] },
+    });
+    const costLine = repTiny.decisionFirst.find((l) => l.startsWith('【成本】'));
+    t('B8 管線：USD 小到六位也印不出來時寫「<$0.000001（原值 …）」，兩組不會顯示成同一串', /<\$0\.000001（原值 1e-7）/.test(costLine) && /<\$0\.000001（原值 2e-7）/.test(costLine));
+    // 0 成本邊界：兩組每次都 0 ⇒ 總和 0（complete）、每次全對成本 0、決策矩陣視為相當
+    const repZero = buildFixture('zero', cfgT, {
+      c1: { with: [[[V('fact-f', true)], { costUsd: 0 }]], without: [[[V('fact-f', true)], { costUsd: 0 }]] },
+      c2: { with: [[[V('fact-f', false)], { costUsd: 0 }]], without: [[[V('fact-f', false)], { costUsd: 0 }]] },
+    });
+    t('B9 管線：0 成本邊界——總和 0 算「完整」（不是缺值）、每次全對成本 0，決策摘要印 $0.000', repZero.cost.with.sumCostUsd === 0 && repZero.cost.with.costComplete === true && repZero.cost.with.perSuccessCostUsd === 0 && /帶 \$0\.000 vs 不帶 \$0\.000/.test(repZero.decisionFirst.find((l) => l.startsWith('【成本】'))));
+    // C4：負成本按缺值處理＋旗標
+    const repNeg = buildFixture('neg', cfgT, {
+      c1: { with: [[[V('fact-f', true)], { costUsd: -0.5 }]], without: [[[V('fact-f', true)]]] },
+      c2: { with: [[[V('fact-f', true)]]], without: [[[V('fact-f', true)]]] },
+    });
+    t('C4 管線：負的 costUsd 按缺值處理（不進總和、不進派生欄）', repNeg.cost.with.sumCostUsd === null && repNeg.cost.with.costRecorded === 1 && repNeg.cost.with.costTotal === 2 && repNeg.cost.with.perSuccessCostUsd === null);
+    t('C4 管線：負的 costUsd 要出旗標，不是靜默吞掉', repNeg.flags.some((f) => /成本數字異常：with 有 1 次/.test(f)));
+  }
+
+  // --- 環節效益表四分類（A3）---
+  // 手推（每組每題 3 次；1 題）：
+  //   o-neg  取向  帶 1/3(.33) vs 不帶 3/3(1.0) → 帶 < 不帶 → 負效益（取向不計分，所以是新旗標「負效益環節」在講它）
+  //   f-neg  事實  帶 1/3      vs 不帶 3/3      → 負效益（計分口徑已有「帶 skill 反而較差」旗標，新旗標不重複講）
+  //   f-low  事實  帶 0/3      vs 不帶 0/3      → 都 ≤1/3 → 兩邊都低
+  //   f-high 事實  帶 3/3      vs 不帶 3/3      → 都 ≥2/3 → 兩邊都高
+  //   f-pos  事實  帶 3/3      vs 不帶 1/3(.33) → 不是負效益、不是都低（max=1）、不是都高（min=.33）→ 正效益
+  {
+    const cfgB = { name: 'fx-benefit', runs: 3, arms: twoArms,
+      assertions: [
+        { id: 'o-neg', family: 'orientation', text: '取向 neg', label: '取向負效益' },
+        { id: 'f-neg', family: 'fact', text: '事實 neg', label: '事實負效益' },
+        { id: 'f-low', family: 'fact', text: '事實 low', label: '兩邊都低項' },
+        { id: 'f-high', family: 'fact', text: '事實 high', label: '兩邊都高項' },
+        { id: 'f-pos', family: 'fact', text: '事實 pos', label: '正效益項' },
+      ],
+      cases: [{ id: 'c1', assertions: ['o-neg', 'f-neg', 'f-low', 'f-high', 'f-pos'] }] };
+    const mk = (oNeg, fNeg, fPos) => [V('o-neg', oNeg), V('f-neg', fNeg), V('f-low', false), V('f-high', true), V('f-pos', fPos)];
+    const rep = buildFixture('benefit', cfgB, {
+      c1: {
+        with: [[mk(true, true, true)], [mk(false, false, true)], [mk(false, false, true)]],
+        without: [[mk(true, true, true)], [mk(true, true, false)], [mk(true, true, false)]],
+      },
+    });
+    const kindOf = (id) => rep.benefit.rows.find((x) => x.id === id)?.kind;
+    t('A3 環節效益表：四分類逐條對上手推答案（負效益／兩邊都低／兩邊都高／正效益）',
+      kindOf('o-neg') === 'negative' && kindOf('f-neg') === 'negative' && kindOf('f-low') === 'bothLow' && kindOf('f-high') === 'bothHigh' && kindOf('f-pos') === 'positive');
+    t('A3 環節效益表：負效益排最前（改 skill 時最優先）', rep.benefit.rows[0].kind === 'negative' && rep.benefit.rows[1].kind === 'negative');
+    t('A3 環節效益表：樣本每格 3 次＝不算薄，不掛「當線索不當定論」', rep.benefit.thin === false && !/當線索，不當定論/.test(rep.benefit.note));
+    t('A3 環節效益表：負效益出醒目旗標；已有計分口徑旗標的那條不重複講', rep.flags.some((f) => f.startsWith('負效益環節：取向負效益')) && !rep.flags.some((f) => f.startsWith('負效益環節：事實負效益')) && rep.flags.some((f) => f.startsWith('帶 skill 反而較差：f-neg')));
+    t('A3 環節效益表：母體說明講清楚跟計分表口徑不同（不會被讀成同一張表）', /前置檢查沒過的 run 也照算/.test(rep.benefit.denominatorNote));
+    const md = reportMarkdown(cfgB, rep), h = R.renderReportHtml(rep, {});
+    t('A3 環節效益表：Markdown 與 HTML 都出這張表，四類判讀字樣都在', /## 環節效益表/.test(md) && /負效益（帶 skill 反而差）/.test(md) && /兩邊都低/.test(md) && /兩邊都高/.test(md) && /正效益/.test(md) && /環節效益表/.test(h) && /兩邊都高/.test(h));
+    // 卡住的預期＝帶 skill 那組沒有全過的檢查項；負效益兩條排最前（同為負效益時照 id 排：f-neg 在 o-neg 前），最多列三條
+    t('A3 環節效益表：路線 A 的「卡住的預期檢查」清單從這張表出，負效益排最前並標最優先', /^【建議·改 skill】卡住的預期檢查：事實負效益（帶 1\/3、不帶 3\/3，帶 skill 反而差、最優先）；取向負效益（帶 1\/3、不帶 3\/3，帶 skill 反而差、最優先）；兩邊都低項（帶 0\/3、不帶 0\/3）$/.test(rep.decisionFirst.find((l) => l.startsWith('【建議·改 skill】'))));
+    // 樣本薄：同一份設計改成每組每題 2 次 ⇒ thin=true，整表掛警語
+    const repThin = buildFixture('benefit-thin', { ...cfgB, name: 'fx-benefit-thin', runs: 2 }, {
+      c1: { with: [[mk(true, true, true)], [mk(false, false, true)]], without: [[mk(true, true, true)], [mk(true, true, false)]] },
+    });
+    t('A3 環節效益表：每格判定數 <3 時整表掛「當線索，不當定論」', repThin.benefit.thin === true && /當線索，不當定論/.test(repThin.benefit.note));
+  }
+
+  // --- 三路線建議（A2）各分支 ---
+  // 手推（3 題 × 每組 2 次；assertions fact-a／fact-b，全部進計分且兩組母體一致）：
+  //   c-good  帶：兩次都 a✓b✓ → 全對 2/2＝100%；不帶：兩次 a✗b✓ → 全對 0/2＝0%
+  //   c-mid   帶／不帶都是 r1 a✓b✓、r2 a✓b✗ → 各 1/2＝50%
+  //   c-bad   帶／不帶都是 a✓b✗ 兩次 → 各 0/2＝0%
+  //   ⇒ 帶 skill 全對率最高＝c-good(100%)、最低＝c-bad(0%)；路線 B 用高低兩端、路線 C 用最高那一題
+  {
+    const cfgR = { name: 'fx-routes', runs: 2, arms: twoArms,
+      assertions: [{ id: 'fact-a', family: 'fact', text: 'fact a', label: '檢查 a' }, { id: 'fact-b', family: 'fact', text: 'fact b', label: '檢查 b' }],
+      cases: ['c-good', 'c-mid', 'c-bad'].map((id) => ({ id, assertions: ['fact-a', 'fact-b'] })) };
+    const ab = (a, b) => [V('fact-a', a), V('fact-b', b)];
+    const rep = buildFixture('routes', cfgR, {
+      'c-good': { with: [[ab(true, true)], [ab(true, true)]], without: [[ab(false, true)], [ab(false, true)]] },
+      'c-mid': { with: [[ab(true, true)], [ab(true, false)]], without: [[ab(true, true)], [ab(true, false)]] },
+      'c-bad': { with: [[ab(true, false)], [ab(true, false)]], without: [[ab(true, false)], [ab(true, false)]] },
+    });
+    const df = rep.decisionFirst;
+    const line = (tag) => df.find((l) => l.startsWith(tag)) || '';
+    t('A2 三路線：全對率主行＝三題合計（帶 3/6＝50%、不帶 1/6＝17%）', /【成功率】場景全對（AI 評分）：帶 3\/6（50%） vs 不帶 1\/6（17%）/.test(line('【成功率】')));
+    t('A2 三路線：情境地圖點出最高與最低的場景與各自全對率', /^【情境地圖】全對率最高：c-good（帶 2\/2，100%；不帶 0\/2，0%）；最低：c-bad（帶 0\/2，0%；不帶 0\/2，0%）。$/.test(line('【情境地圖】')));
+    t('A2 三路線：路線 B 由場景差生成（高的先用、低的先避開或補強）', /^【建議·改用法】先用在全對率高的情境：c-good（帶 2\/2，100%；不帶 0\/2，0%）；全對率低的 c-bad（帶 0\/2，0%；不帶 0\/2，0%） 先避開，或補一段人工複核再交出去。$/.test(line('【建議·改用法】')));
+    t('A2 三路線：路線 C 不管使用率高低都報最高成功情境', /【建議·發掘】全對率最高的情境是 c-good（帶 2\/2，100%；不帶 0\/2，0%）——不管現在用得多不多/.test(line('【建議·發掘】')));
+    t('A2 三路線：路線 A 列卡住的預期檢查（fact-b 帶 skill 只過一半）', /【建議·改 skill】卡住的預期檢查：檢查 b（帶 3\/6、不帶 3\/6）/.test(line('【建議·改 skill】')));
+    t('A2 三路線：Markdown 全鏈帶得出三路線建議', (() => { const md = reportMarkdown(cfgR, rep); return md.includes('【建議·改 skill】') && md.includes('【建議·改用法】') && md.includes('【建議·發掘】'); })());
+  }
+
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+}
+
+// render.mjs 與 gauge.mjs 的美元 formatter 必須是同一套規則（兩邊各留一份複本，這裡逐值對照）
+{
+  const R = await import('./render.mjs');
+  const VALS = [0, 0.001, 0.0021, 0.0024, 0.01, 0.02, 1e-7, 2e-7, 1.5, null, NaN, Infinity];
+  let mismatch = 0;
+  for (const v of VALS) for (const d of [3, 4, 6]) if (fmtUsd(v, d) !== R.fmtUsd(v, d)) { mismatch++; console.log('   fmtUsd 不一致:', v, d, fmtUsd(v, d), R.fmtUsd(v, d)); }
+  for (const set of [[0.02, 0.01], [0.0021, 0.0024], [0.0001, 0.0002], [1e-7, 2e-7], [0.02], []]) if (usdDigits(set) !== R.usdDigits(set)) { mismatch++; console.log('   usdDigits 不一致:', set); }
+  t('美元 formatter：render.mjs 與 gauge.mjs 逐值輸出完全相同（B8「互比欄位共用同一 formatter」）', mismatch === 0);
+  t('fmtUsd：小到指定位數印不出來就寫「<$…（原值 …）」，不同的值不會變成同一串', fmtUsd(1e-7, 6) === '<$0.000001（原值 1e-7）' && fmtUsd(2e-7, 6) === '<$0.000001（原值 2e-7）' && fmtUsd(0, 3) === '$0.000');
+  t('fmtUsd：非有限值回 null（不印出 $NaN／$Infinity）', fmtUsd(NaN, 3) === null && fmtUsd(Infinity, 3) === null && fmtUsd(null, 3) === null);
+  t('validCostUsd：只收有限且非負；負值、NaN、Infinity、字串都回 null', validCostUsd(0) === 0 && validCostUsd(1.5) === 1.5 && validCostUsd(-0.1) === null && validCostUsd(NaN) === null && validCostUsd(Infinity) === null && validCostUsd('1') === null);
+}
+
+// classifyScenario 純函式的已知答案（場景全對制的定義本身）
+{
+  const v = (id, pass) => ({ id, pass });
+  t('classifyScenario：全部明確 pass → 場景全對', classifyScenario(['a', 'b'], [v('a', true), v('b', true)]) === 'success');
+  t('classifyScenario：任一條明確 false → 有效但未成功（含只有 gate 過、fact 沒過的情形）', classifyScenario(['a', 'b'], [v('a', true), v('b', false)]) === 'notFirstPass');
+  t('classifyScenario：沒有明確 false 但有 null → 無法判定', classifyScenario(['a', 'b'], [v('a', true), v('b', null)]) === 'indeterminate');
+  t('classifyScenario：既有 false 又有 null → 判得出來沒全對，算有效但未成功（不是無法判定）', classifyScenario(['a', 'b', 'c'], [v('a', false), v('b', null), v('c', true)]) === 'notFirstPass');
+  t('classifyScenario：缺判定（評分沒回這一條）視同 null → 無法判定', classifyScenario(['a', 'b'], [v('a', true)]) === 'indeterminate');
+  t('classifyScenario：該題一條預期檢查都沒有 → 無法判定（不能算全對）', classifyScenario([], [v('a', true)]) === 'indeterminate');
+}
+
+// benefitKind 純函式的已知答案（先按裁定的優先序手推，再對實作）
+{
+  t('benefitKind：帶 < 不帶 → 負效益（優先序最高，就算兩邊都很高也一樣）', benefitKind(0.9, 1) === 'negative' && benefitKind(0, 0.5) === 'negative');
+  t('benefitKind：兩邊都 ≤1/3 → 兩邊都低', benefitKind(0, 0) === 'bothLow' && benefitKind(1 / 3, 0) === 'bothLow');
+  t('benefitKind：兩邊都 ≥2/3 → 兩邊都高', benefitKind(1, 1) === 'bothHigh' && benefitKind(1, 2 / 3) === 'bothHigh');
+  t('benefitKind：帶 > 不帶且不落在都低／都高 → 正效益', benefitKind(1, 0.5) === 'positive' && benefitKind(0.5, 1 / 3) === 'positive');
+  t('benefitKind：中段平手照 0.5 歸類（不留沒有分類的洞）', benefitKind(0.4, 0.4) === 'bothLow' && benefitKind(0.6, 0.6) === 'bothHigh');
 }
 
 // HTML 渲染器（若存在）：三種都能吐出含關鍵字的 HTML、不含外部資源

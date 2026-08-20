@@ -36,6 +36,23 @@ const dash = (s) => (s === null || s === undefined || s === '' ? '—' : s);
 const fmtOr = (x, digits) => dash(fmtNum(x, digits));
 // 比例（相似度那些）不四捨五入：引擎已經取到小數第三位，再壓一次會把 0.572 跟 0.579 變成同一個數字
 const fmtRatio = (x) => (num(x) === null ? '—' : String(num(x)));
+// 美元：位數自適應（同一組要比較的值取共同位數，避免不同值顯示成一樣、或都顯示成 $0.000）；預設 3 位，最多到 6 位。
+// 這兩個函式跟 gauge.mjs 的同名函式是同一套規則（render.mjs 保持零 import，所以留一份複本；
+// selftest 逐值對照兩邊輸出必須完全相同，任一邊改了另一邊沒改就會紅）。
+export function usdDigits(vals) {
+  const nums = (vals || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (nums.length < 2) return 3;
+  const distinct = new Set(nums.map((v) => +v.toFixed(10))).size;
+  for (let d = 3; d < 6; d++) { if (new Set(nums.map((v) => v.toFixed(d))).size >= distinct) return d; }
+  return 6;
+}
+export function fmtUsd(x, digits = 3) {
+  const v = num(x);
+  if (v === null || !Number.isFinite(v)) return null;
+  const eps = Math.pow(10, -digits);
+  if (v !== 0 && Math.abs(v) < eps) return `<$${eps.toFixed(digits)}（原值 ${v}）`;
+  return `$${v.toFixed(digits)}`;
+}
 // 時長：超過兩分鐘改用分，不然逾時的 run 會出現「1200.0 秒」
 function fmtDur(sec) {
   const s = num(sec);
@@ -402,12 +419,14 @@ export function renderReportHtml(report, opts = {}) {
   if (nz(r.engine)) chips.push(chip(`量測引擎 ${txt(r.engine)}`));
 
   const sections = [
+    secDecisionFirst(r),
     secSummary(r),
     secKeyPoints(r, arms, sens),
     secSayNotSay(),
     secConditions(r, arms),
     secTotals(r, arms, sens),
     secAssertionGrid(r, arms),
+    secBenefit(r),
     secCases(r, arms),
     secPressure(r, arms),
     secTrigger(r),
@@ -441,19 +460,30 @@ function nextHtml(sm) {
   const rest = [...asArr(nk.none), ...asArr(nk.other)];
   return `<h3>該怎麼改——兩件事分開看</h3><ul class="keypoints"><li><strong>改題目</strong>（測量本身的題目與檢查）：${q.length ? esc(q.join('；')) : '這次沒有'}</li><li><strong>改 skill 本身</strong>：${s.length ? esc(s.join('；')) : '這次沒有要改 skill 的建議'}</li>${rest.map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>`;
 }
-// 0. 摘要結論（給人看的一頁；report.summary 由引擎產生，沒有就不顯示）
+// -1. 決策摘要（真正的第一頁；report.decisionFirst 由引擎產生的四句＋邊界行，沒有就不顯示）
+function secDecisionFirst(r) {
+  const lines = asArr(r.decisionFirst);
+  if (!lines.length) return null;
+  return section(
+    'decision-first',
+    '決策摘要',
+    `<ul class="keypoints">${lines.map((l) => `<li>${esc(txt(l))}</li>`).join('')}</ul>`,
+    '每一句都是引擎從 report.json 算出來的，不是 AI 現場寫的；下面各節是同一份資料的深究版。'
+  );
+}
+// 0. 原始摘要（深究用；report.summary 由引擎產生，沒有就不顯示）——給人看的第一頁是上面的決策摘要，這一段是它的推導細節
 function secSummary(r) {
   const sm = asObj(r.summary);
   if (!nz(sm.helped)) return null;
   const list = (title, arr) => (asArr(arr).length ? `<h3>${esc(title)}</h3><ul class="keypoints">${asArr(arr).map((x) => `<li>${esc(txt(x))}</li>`).join('')}</ul>` : '');
   const wins = asArr(sm.winsPlain ?? sm.wins), losses = asArr(sm.lossesPlain ?? sm.losses);
   const inline = (title, arr) => (arr.length ? `<p><strong>${esc(title)}：</strong>${arr.map((x) => esc(txt(x))).join('；')}</p>` : '');
-  return section('summary', '摘要結論（給人看的一頁）',
+  return section('summary', '原始摘要（深究用）',
     `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>有沒有幫上忙？</strong> ${esc(txt(sm.helped))}</p>
 ${nz(sm.needFix) ? `<p class="bar" style="font-size:1.05rem;line-height:1.9"><strong>需不需要改進？</strong> ${esc(txt(sm.needFix))}</p>` : ''}
 ${nextHtml(sm)}${inline('優點在哪', wins)}${inline('缺點在哪／要注意', losses)}${list('這次的限制', sm.limits)}
 ${asArr(sm.askAI).length ? `<p><strong>跟 AI 討論這份報告時，可以這樣問：</strong>${asArr(sm.askAI).map((x) => esc(txt(x))).join(' ')}</p>` : ''}
-<p class="note">優缺點每條有沒有過幾次，在下面「逐條檢查項」那張表；轉述給別人只用這一頁。</p>`);
+<p class="note">優缺點每條有沒有過幾次，在下面「逐條檢查項」那張表；決策摘要（上面）才是轉述給別人用的那一頁，這裡是深究細節。</p>`);
 }
 
 function secKeyPoints(r, arms, sens) {
@@ -505,13 +535,13 @@ function secKeyPoints(r, arms, sens) {
 
   const flags = asArr(r.flags).map(txt);
   const count = (p) => flags.filter((f) => f.startsWith(p)).length;
-  const zero = count('零鑑別'), hurt = count('帶 skill 反而'), sim = count('同格'), bias = count('前置檢查作廢集中') + count('前置檢查偏向');
+  const zero = count('零鑑別'), hurt = count('帶 skill 反而'), sim = count('同格'), bias = count('前置檢查沒過集中') + count('前置檢查偏向');
   const never = count('恆不過'), noload = count('skill 沒被載入'), negfire = count('負向對照題誤觸發'), nofoot = count('看不出足跡');
   if (zero) L.push(`有 ${esc(zero)} 條檢查項兩組全過：這些項目測不出 skill 的差別（可能模型本來就會，或題目太鬆）。`);
   if (never) L.push(`有 ${esc(never)} 條檢查項兩組全不過：判斷標準可能太嚴，或量到了別的東西。`);
   if (hurt) L.push(`有 ${esc(hurt)} 條檢查項帶 skill 反而較差，逐條看下面的表。`);
   if (sim) L.push(`有 ${esc(sim)} 個格子的同格 run 高度相似，有效樣本比次數少。`);
-  if (bias) L.push('前置檢查作廢集中在某一組：先去「逐份看產出」分辨是前置檢查含 skill 專屬格式（兩組不對等，先修檢查），還是那一組沒交付（拒答、只反問——這本身就是結果）。');
+  if (bias) L.push('前置檢查沒過集中在某一組：先去「逐份看產出」分辨是前置檢查含 skill 專屬格式（兩組不對等，先修檢查），還是那一組沒交付（拒答、只反問——這本身就是結果）。');
   if (noload) L.push(`有 ${esc(noload)} 條旗標指出 skill 沒被載入——那幾次量到的不是「帶 skill」。`);
   if (negfire) L.push(`負向對照題誤觸發：不該出手的場景也出手了，看下面的足跡段。`);
   if (nofoot) L.push('看不出足跡：帶 skill 那組沒有留下呼叫或讀取的痕跡，先確認 skill 真的有進場。');
@@ -773,6 +803,35 @@ function secAssertionGrid(r, arms) {
   );
 }
 
+// 5b. 環節效益表（第二層診斷）：逐一條預期檢查看帶／不帶的通過率差，四分類
+const BENEFIT_CHIP = { negative: 'bad', bothLow: 'warn', bothHigh: 'warn', positive: '' };
+function secBenefit(r) {
+  const b = asObj(r.benefit);
+  const rows = asArr(b.rows);
+  if (!rows.length) return null;
+  const cellOf = (x) => { const o = asObj(x); return `${esc(fmtOr(o.pass))}/${esc(fmtOr(o.judged))}（${esc(Math.round((num(o.rate) || 0) * 100))}%）`; };
+  const trs = rows.map((x) => {
+    const o = asObj(x);
+    const d = num(o.diff) || 0;
+    return [
+      `<div class="wide"><code>${esc(txt(o.id))}</code><div>${esc(txt(o.label))}</div></div>`,
+      esc(familyLabel(o.family)),
+      { td: `<td class="num">${cellOf(o.with)}</td>` },
+      { td: `<td class="num">${cellOf(o.without)}</td>` },
+      { td: `<td class="num">${esc((d > 0 ? '+' : '') + Math.round(d * 100))}%</td>` },
+      chip(txt(o.kindZh), BENEFIT_CHIP[txt(o.kind)] ?? ''),
+    ];
+  });
+  const inner = table(['檢查項', '類別', { html: '帶 skill', num: true }, { html: '不帶', num: true }, { html: '差', num: true }, '判讀'], trs) +
+    `<ul class="keypoints"><li><strong>負效益（帶 skill 反而差）</strong>＝幫倒忙的具體位置，改 skill 時最優先。</li>` +
+    `<li><strong>兩邊都低</strong>＝出題問題或能力缺口，先改題目。</li>` +
+    `<li><strong>兩邊都高</strong>＝這個環節 skill 沒貢獻；如果它是主賣點，就是「沒用」的警訊。</li>` +
+    `<li><strong>正效益</strong>＝值得延伸的地方。</li></ul>` +
+    `<p class="note">${esc(txt(b.note))}${num(b.skipped) ? ` 另有 ${esc(fmtOr(b.skipped))} 條檢查項因為有一組沒有明確判定，沒進這張表。` : ''}</p>`;
+  return section('benefit', '環節效益表（哪個環節幫上忙、哪個環節幫倒忙）', inner,
+    b.thin === true ? '每格樣本薄——這張表當線索，不當定論。' : '逐條檢查項的通過率差；個位數次數本來就會晃，配著旗標一起讀。');
+}
+
 // 6. 逐題
 function secCases(r, arms) {
   const cases = asArr(r.cases);
@@ -982,30 +1041,68 @@ function secFootprint(r) {
 }
 
 // 10. 成本
+// token 欄：完整（recorded===total 且 total>0）才顯示中位／總和；不完整就老實標「記錄不完整（recorded/total）」，不冒充總和
+function tokenCell(median, sumVal, recorded, total) {
+  const med = fmtOr(median);
+  if (num(total) !== null && num(total) > 0 && recorded === total) return `${med} ／ ${fmtOr(sumVal)}`;
+  return `${med} ／ 記錄不完整（${fmtOr(recorded)}/${fmtOr(total)}）`;
+}
 function secCost(r, arms) {
   const cost = asObj(r.cost);
-  const rows = arms
-    .filter((a) => isObj(cost[a]))
-    .map((a) => {
-      const c = asObj(cost[a]);
-      return [
-        armHeadHtml(a),
-        { td: `<td class="num">${esc(fmtOr(c.runs))}</td>` },
-        { td: `<td class="num">${esc(num(c.medianDurationS) === null ? '—' : num(c.medianDurationS).toFixed(1))}</td>` },
-        { td: `<td class="num">${esc(fmtOr(c.medianOutputTokens))}</td>` },
-        { td: `<td class="num">${esc(num(c.medianCostUsd) === null ? '—' : num(c.medianCostUsd).toFixed(3))}</td>` },
-        asArr(c.models).map((m) => `<code>${esc(txt(m))}</code>`).join('、') || '—',
-      ];
-    });
+  const present = arms.filter((a) => isObj(cost[a]));
+  const medianDigits = usdDigits(present.map((a) => num(asObj(cost[a]).medianCostUsd)));
+  const sumDigits = usdDigits(present.map((a) => num(asObj(cost[a]).sumCostUsd)));
+  const rows = present.map((a) => {
+    const c = asObj(cost[a]);
+    return [
+      armHeadHtml(a),
+      { td: `<td class="num">${esc(fmtOr(c.runs))}</td>` },
+      { td: `<td class="num">${esc(num(c.medianDurationS) === null ? '—' : num(c.medianDurationS).toFixed(1))}</td>` },
+      { td: `<td class="num">${esc(fmtOr(c.medianOutputTokens))}</td>` },
+      { td: `<td class="num">${esc(fmtUsd(c.medianCostUsd, medianDigits) ?? '—')}</td>` },
+      asArr(c.models).map((m) => `<code>${esc(txt(m))}</code>`).join('、') || '—',
+    ];
+  });
   if (!rows.length) return null;
+  let inner = table(
+    ['組', { html: '次數', num: true }, { html: '時長中位數（秒）', num: true }, { html: '輸出 token 中位數', num: true }, { html: '每次費用中位數（USD）', num: true }, '實際跑的模型'],
+    rows
+  );
+
+  // 深究：成本派生欄的完整分子分母與完整度——決策摘要的【成本】行就是從這裡算出來的
+  const successDigits = usdDigits(present.map((a) => num(asObj(cost[a]).perSuccessCostUsd)));
+  const passedDigits = usdDigits(present.map((a) => num(asObj(cost[a]).perPassedCheckCostUsd)));
+  const derivedRows = present.map((a) => {
+    const c = asObj(cost[a]);
+    const sumCell = c.costComplete === true ? (fmtUsd(c.sumCostUsd, sumDigits) ?? '—') : `成本記錄不完整（${esc(fmtOr(c.costRecorded))}/${esc(fmtOr(c.costTotal))}）`;
+    const denom = (num(c.successRuns) || 0) + (num(c.notFirstPassRuns) || 0);
+    const fpp = denom > 0 ? `${Math.round(((num(c.successRuns) || 0) / denom) * 100)}%（proxy：${esc(fmtOr(c.successRuns))}/${esc(denom)}）` : '—';
+    return [
+      armHeadHtml(a),
+      sumCell,
+      { td: `<td class="num">${esc(fmtOr(c.successRuns))}</td>` },
+      { td: `<td class="num">${esc(fmtOr(c.notFirstPassRuns))}</td>` },
+      { td: `<td class="num">${esc(fmtOr(c.indeterminateRuns))}</td>` },
+      { td: `<td class="num">${esc(fmtOr(c.discardedRuns))}</td>` },
+      { td: `<td class="num">${esc(fmtUsd(c.perSuccessCostUsd, successDigits) ?? '—')}</td>` },
+      { td: `<td class="num">${esc(fmtUsd(c.perPassedCheckCostUsd, passedDigits) ?? '—')}</td>` },
+      `<span class="small dim">${esc(fpp)}</span>`,
+      { td: `<td class="num">${esc(tokenCell(c.medianInputTokens, c.sumInputTokens, c.inputTokensRecorded, c.inputTokensTotal))}</td>` },
+      { td: `<td class="num">${esc(tokenCell(c.medianOutputTokens, c.sumOutputTokens, c.outputTokensRecorded, c.outputTokensTotal))}</td>` },
+    ];
+  });
+  inner += `<h3>深究：成本派生欄（決策摘要【成本】行的完整分子分母）</h3>
+${table(
+    ['組', '總成本（USD）', { html: '場景全對（AI 評分）', num: true }, { html: '有效但未成功', num: true }, { html: '無法判定', num: true }, { html: '前置作廢', num: true }, { html: '每次全對的成本', num: true }, { html: '每過格成本', num: true }, '一次到位（proxy）', { html: 'input token（中位／總和）', num: true }, { html: 'output token（中位／總和）', num: true }],
+    derivedRows
+  )}
+<p class="note">「場景全對（AI 評分）」＝該題全部預期檢查（前置／事實／判斷／取向）逐條明確 pass=true——是 AI 評分，不是機械 validator；「有效但未成功」＝其中有一條明確沒過（含前置檢查沒過的 run，它是結果、不是作廢）；「無法判定」＝有判定回 null 或缺判定。前置作廢（執行或評分失敗）的花費仍計進總成本，但不進任何分母。全對率與一次到位率的分母只有「場景全對」＋「有效但未成功」兩類，前置作廢與無法判定都不算進去。任一應計 run 缺值時，總成本與依賴它的每項派生成本一律回不完整，不冒充較小的完整數字。${nz(asObj(r.costFlow).note) ? esc(txt(asObj(r.costFlow).note)) + '。' : ''}</p>`;
+
   return section(
     'cost',
     '成本',
-    table(
-      ['組', { html: '次數', num: true }, { html: '時長中位數（秒）', num: true }, { html: '輸出 token 中位數', num: true }, { html: '每次費用中位數（USD）', num: true }, '實際跑的模型'],
-      rows
-    ),
-    '中位數，不是總和；費用依帳號方案而異，只當同一次量測內的相對參考。'
+    inner,
+    '第一張表是中位數（每次大約多少）；第二張表是總和與派生欄（總共花多少、每次全對要多少）——兩張表不要互相加減。費用依帳號方案而異，只當同一次量測內的相對參考。'
   );
 }
 
@@ -1030,7 +1127,7 @@ function secFlags(r) {
     inner += '<p class="muted">沒有旗標。</p>';
   }
   if (inv.length) {
-    inner += `<h3>作廢的 run（前置檢查沒過，要補跑）</h3><p>${inv.map((x) => `<code>${esc(x)}</code>`).join('、')}</p>`;
+    inner += `<h3>沒過前置檢查的 run（有效但未成功，不進計分；是結果、不是作廢）</h3><p>${inv.map((x) => `<code>${esc(x)}</code>`).join('、')}</p>`;
   }
   if (hf.length) {
     inner += `<h3>執行或評分失敗（不算受測物的結果，要補跑）</h3><p>${hf.map((x) => `<code>${esc(x)}</code>`).join('、')}</p>`;
