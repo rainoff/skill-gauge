@@ -115,6 +115,13 @@ function resolveRoot(explicit) {
   return root;
 }
 
+// Windows：剛結束的子程序對沙箱目錄的 handle 可能還沒放掉，fs.rmSync 會丟 EBUSY 並炸掉整條 pipeline
+// （2026-08-20 win-company 實測：54 次執行跑完、評分中途 rmdir 'D:/sg/sg-grader-...' EBUSY，整批結果差點白跑）。
+// recursive 模式下 node 支援 maxRetries／retryDelay，正是為這情形設計；清不掉也只是留個暫存目錄，不該讓量測失敗，所以最後吞掉並記一行。
+function rmDirSafe(p) {
+  try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
+  catch (e) { log(`清不掉暫存沙箱（不影響結果，稍後可手動刪）：${p}（${e.code || e.message}）`); }
+}
 function makeSandbox(root, tag) {
   const dir = path.join(root, `sg-${tag}-${rand()}`);
   fs.mkdirSync(dir, { recursive: true });
@@ -316,9 +323,9 @@ async function checkIsolation({ root, skillDir, skillName, executorModel }) {
     const y = /YES/i.test(yes.text) && !/\bNO\b/.test(yes.text.replace(/YES/gi, ''));
     const n = /\bNO\b/.test(no.text) && !/YES/i.test(no.text);
     results.items.push({ canary: 'skill', withSandbox: withDir, withoutSandbox: withoutDir, with: yes.text.slice(0, 200), without: no.text.slice(0, 200), verdict: !yes.ok || !no.ok ? 'harness-failure' : y && n ? 'PASS' : 'FAIL' });
-    fs.rmSync(withDir, { recursive: true, force: true }); fs.rmSync(withoutDir, { recursive: true, force: true });
+    rmDirSafe(withDir); rmDirSafe(withoutDir);
   }
-  fs.rmSync(sb, { recursive: true, force: true });
+  rmDirSafe(sb);
   results.ok = results.items.every((i) => i.verdict === 'PASS' || i.verdict.startsWith('INCONCLUSIVE'));
   results.allPass = results.items.every((i) => i.verdict === 'PASS');
   return results;
@@ -353,7 +360,7 @@ async function runOne({ cfg, root, kase, arm, k, outDir }) {
     toolNames: r.toolUses.map((t) => t.name), artifacts: created, stderrTail: r.ok ? undefined : r.stderr,
   };
   writeJSON(path.join(runDir, 'meta.json'), meta);
-  fs.rmSync(sb, { recursive: true, force: true });
+  rmDirSafe(sb);
   log(`${kase.id} ${arm.name} r${k}: ${r.ok ? 'ok' : 'FAILED'} ${Math.round(r.durationMs / 1000)}s ${r.outputTokens ?? '?'} tok${meta.skillFired === true ? ' skill✓' : meta.skillFired === false ? ' skill✗' : ''}`);
   return meta;
 }
@@ -393,7 +400,7 @@ async function runTrigger(cfg, { root, outDir = null, runs, skillDir = null, sho
         const r = await runClaude({ cwd: sb, prompt: q, model: cfg.executorModel, effort: cfg.executorEffort, allowedTools: cfg.allowedTools || [], timeoutMs: GRADE_TIMEOUT_MS });
         const fired = skillFired(r.toolUses, cfg.skill.name);
         rows.push({ kind, query: q, run: k, fired, ok: r.ok, durationMs: r.durationMs });
-        fs.rmSync(sb, { recursive: true, force: true });
+        rmDirSafe(sb);
         if (!quiet) log(`trigger ${kind} r${k} ${fired ? '✓fired' : '·quiet'} — ${q.slice(0, 40).replace(/\n/g, ' ')}`);
       }
     }
@@ -526,7 +533,7 @@ ${JSON.stringify([GRADER_FIXTURE.assertion], null, 2)}
   for (const [label, out] of [['good', GRADER_FIXTURE.good], ['bad', GRADER_FIXTURE.bad]]) {
     const sb = makeSandbox(root, 'grader-selfcheck');
     const r = await runClaude({ cwd: sb, prompt: mk(out), model: judgeModel, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS, noTools: true });
-    fs.rmSync(sb, { recursive: true, force: true });
+    rmDirSafe(sb);
     const arr = r.ok ? extractJSONArray(r.text) : null;
     results[label] = Array.isArray(arr) && arr[0] ? !!arr[0].pass : null;
   }
@@ -557,7 +564,7 @@ async function gradeAll(cfg, { root, outDir, judgeModel }) {
         const { prompt, truncated, assertionIds, isPressure } = graderPrompt(cfg, kase, runDir);
         const sb = makeSandbox(root, 'grader');
         const r = await runClaude({ cwd: sb, prompt, model: judgeModel, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS, noTools: true });
-        fs.rmSync(sb, { recursive: true, force: true });
+        rmDirSafe(sb);
         let arr = r.ok ? extractJSONArray(r.text) : null;
         let pressure = null;
         if (isPressure) ({ arr, pressure } = extractPressure(arr, kase, fs.readFileSync(path.join(runDir, 'output.md'), 'utf8')));
@@ -1824,7 +1831,7 @@ ${history.map((h) => `- 第 ${h.round} 輪 ${h.train.passed}/${h.train.total}：
 - 只輸出新的 description 全文：不要引號、不要前後說明、不要 markdown、不要「description:」前綴。`;
   const sb = makeSandbox(root, 'describe-propose');
   const r = await runClaude({ cwd: sb, prompt, model, permissionMode: null, timeoutMs: GRADE_TIMEOUT_MS, noTools: true });
-  fs.rmSync(sb, { recursive: true, force: true });
+  rmDirSafe(sb);
   let d = (r.text || '').trim().replace(/^```[a-z]*\r?\n?/, '').replace(/```\s*$/, '').trim();
   if (/^description\s*:/.test(d)) d = d.replace(/^description\s*:\s*/, '').trim();
   if ((d.startsWith('"') && d.endsWith('"')) || (d.startsWith("'") && d.endsWith("'"))) d = d.slice(1, -1);
@@ -1847,7 +1854,7 @@ async function describeLoop(cfg, { root, outDir, rounds, runs, holdout, proposer
     const tmp = makeSandbox(root, `describe-skill-r${round}`); copyDir(cfg.skill.__abs, tmp); fs.writeFileSync(path.join(tmp, 'SKILL.md'), setDescription(skillMd, desc));
     const train = await runTrigger(cfg, { root, runs, skillDir: tmp, should: split.train.should, shouldNot: split.train.shouldNot, quiet: true });
     const test = hasTest ? await runTrigger(cfg, { root, runs, skillDir: tmp, should: split.test.should, shouldNot: split.test.shouldNot, quiet: true }) : null;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    rmDirSafe(tmp);
     return { train: pack(train), test: pack(test) };
   };
   const hist = []; let desc = current;
