@@ -78,6 +78,17 @@ Set-Location "$RUN\without"; Get-Content ..\prompt.txt -Raw | claude -p --settin
 
 **已驗範圍（照抄進 results 的條件宣告）**：2026-08-17 在 macOS 與 Windows 各一台，對「一條全域規則、自動記憶索引、一個全域 skill、一個全域 hook」的已知答案檢查，這套做法都得到預期結果（每題各跑一次）。MCP 沒有設檢查題，不在已驗範圍。
 
+## 換一台機器跑同一份題目
+
+`gauge.json` 有兩個值跟機器綁定：
+
+- `root`（隔離目錄）——不必改檔案，用 `--root` 旗標覆蓋即可（mac 挑 `$TMPDIR` 底下的目錄；Windows 的 `%TEMP%` 在家目錄底下，不能用，見上）。
+- `skill.path`（受測 skill 的位置）——換平台就會失效，只能改檔案。
+
+`gauge.json` 在鎖定範圍內，改了它 `lock.json` 就不一致、引擎拒跑。順序是：改 `skill.path` → `preview` 出核可頁 → 重新核可 → `lock --relock`。
+
+改過 `skill.path` 之後，兩台機器跑的不是同一份鎖定，結果**不可並列比較**，`compare` 也不適用；只能當跨平台複驗，報告的條件宣告要寫明鎖定不同。
+
 ## 不用 Claude Code 的同事怎麼跑（Cowork／Claude Desktop／Claude.ai）
 
 方法一樣——出題、判準、兩臂、條件表、可說明／無法說明全部照模板；差的只有執行。分級照官方 skill-creator 說明書自己的寫法（Claude Code 內建 `/skill-creator` 的 SKILL.md 文末「Claude.ai-specific instructions」與「Cowork-Specific Instructions」兩節）：
