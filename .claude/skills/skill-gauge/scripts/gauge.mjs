@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.1.1';
+const ENGINE_VERSION = '1.2.0';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
