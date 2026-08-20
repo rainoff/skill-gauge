@@ -612,10 +612,10 @@ function baselineVerdict(cfg, outDir) {
     ? `基準組沒有有效 run（前置作廢或失敗 ${failures} 次），先補跑`
     : invalid > 0
     ? `基準組沒有有效 run——${invalid} 次都沒過前置檢查（有效但未成功），詳見決策摘要`
-    : '基準組沒有任何 run（目錄不存在或還沒開始跑），先補跑';
+    : '基準組沒有任何 run（目錄不存在或還沒開始跑），先把它跑完';
   return { arm: base.name, validRuns, invalidRuns: invalid, harnessFailures: failures, expectedRuns: expected, complete, perAssertion: per, allPass: validRuns > 0 && allPass, weakAssertions: weak,
     verdict,
-    note: verdict === 'NO-DATA' ? (validRuns === 0 ? noValidRunsNote : '基準組有 run 但沒有任何計分檢查（事實／判斷）被判定——不能據此停案；檢查 assertions 的 family 與 cases 對應') : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，沒過前置檢查 ${invalid}、前置作廢或失敗 ${failures}）——不准據此停案，先補跑缺的 run` : allPass
+    note: verdict === 'NO-DATA' ? (validRuns === 0 ? noValidRunsNote : '基準組有 run 但沒有任何計分檢查（事實／判斷）被判定——不能據此停案；檢查 assertions 的 family 與 cases 對應') : verdict === 'INCOMPLETE' ? `基準組有效 run 全過，但資料不完整（有效 ${validRuns}/${expected}，沒過前置檢查 ${invalid}、前置作廢或失敗 ${failures}）——不准據此停案。${invalid > 0 ? `沒過前置檢查的 ${invalid} 次是有效結果、不需補跑（它們本身就代表基準組並非每次都過）；` : ''}要補跑的是前置作廢／失敗或還沒跑滿的部分` : allPass
       ? '基準組（不帶 skill）每條計分檢查每次都過：這組題／這把尺測不出 skill 的貢獻——要嘛模型本來就會、要嘛題目太鬆。改題或停案，不要靠多跑幾次。能力上不需要；效率價值未判——要判，加跑完整兩臂成本比較。'
       : cfg.__baselineOnly ? `不帶 skill 的模型在 ${weak.length} 條檢查上沒全過（${weak.join('、')}）——這幾條就是 skill 值得補的地方；寫了 skill 之後補上 skill.path，再量帶 skill 那組。`
       : `基準組在 ${weak.length} 條檢查上沒全過，帶 skill 那組有空間顯出差別；繼續跑。` };
@@ -761,7 +761,7 @@ const BENEFIT_KIND_ZH = { negative: '負效益（帶 skill 反而差）', bothLo
 const BENEFIT_THIN_RUNS = 3;
 // 分類門檻寫進 report.benefit，外部消費者才重建得出分類（第三輪複核要求）
 const BENEFIT_THRESHOLDS = { substantiveDiffRuns: BENEFIT_SUBSTANTIVE_RUNS, low: BENEFIT_LOW, high: BENEFIT_HIGH, thinJudgements: BENEFIT_THIN_RUNS,
-  note: '通過次數差 ≥1 次＝實質差（帶得多＝正效益、帶得少＝負效益）；沒有實質差才看水準：雙臂通過率都 ≤1/3＝兩邊都低、都 ≥2/3＝兩邊都高，其餘中段。每格判定數 <3 時整表算樣本薄。' };
+  note: '同母體時：通過次數差 ≥1 次＝實質差（帶得多＝正效益、帶得少＝負效益）；母體不等時：改用比率差（門檻 1/max(N)）並標「母體不等」；沒有實質差才看水準：雙臂通過率都 ≤1/3＝兩邊都低、都 ≥2/3＝兩邊都高，其餘中段。每格判定數 <3 時整表算樣本薄。' };
 
 function buildReport(cfg, outDir) {
   const runsDir = path.join(outDir, 'runs');
@@ -1525,7 +1525,7 @@ function reportMarkdown(cfg, r) {
   if (r.benefit?.rows?.length) {
     L.push('', '## 環節效益表（哪個環節幫上忙、哪個環節幫倒忙）', '', `| 檢查項 | 類 | 帶 skill | 不帶 | 差 | 判讀 |`, `|---|---|---|---|---|---|`);
     for (const b of r.benefit.rows) L.push(`| ${b.label} | ${b.family} | ${b.with.pass}/${b.with.judged}（${Math.round(b.with.rate * 100)}%） | ${b.without.pass}/${b.without.judged}（${Math.round(b.without.rate * 100)}%） | ${b.diff > 0 ? '+' : ''}${Math.round(b.diff * 100)}% | ${b.kindZh}${b.populationMismatch ? `　${b.populationMismatchLabel}` : ''} |`);
-    L.push('', `- 分類先看有沒有實質差（通過次數差 ≥1 次），沒有實質差才看水準。`, `- 負效益（帶 skill 反而差）＝幫倒忙的具體位置，改 skill 時最優先。`, `- 正效益＝帶 skill 明顯多過，值得延伸的地方。`, `- 兩邊都低＝出題問題或能力缺口，先改題目。`, `- 兩邊都高＝這個環節 skill 沒貢獻；如果它是主賣點，就是「沒用」的警訊。`, `- 中段（沒有實質差）＝兩組差不多，也看不出水準特別高或低。`, `- ${r.benefit.note}${r.benefit.thresholds ? ' 分類門檻：' + r.benefit.thresholds.note : ''}`);
+    L.push('', `- 分類先看有沒有實質差（同母體＝通過次數差 ≥1 次；母體不等＝比率差過門檻並標「母體不等」），沒有實質差才看水準。`, `- 負效益（帶 skill 反而差）＝幫倒忙的具體位置，改 skill 時最優先。`, `- 正效益＝帶 skill 明顯多過，值得延伸的地方。`, `- 兩邊都低＝出題問題或能力缺口，先改題目。`, `- 兩邊都高＝這個環節 skill 沒貢獻；如果它是主賣點，就是「沒用」的警訊。`, `- 中段（沒有實質差）＝兩組差不多，也看不出水準特別高或低。`, `- ${r.benefit.note}${r.benefit.thresholds ? ' 分類門檻：' + r.benefit.thresholds.note : ''}`);
     if (r.benefit.skipped) L.push(`- 另有 ${r.benefit.skipped} 條檢查項因為有一組沒有明確判定，沒進這張表。`);
   }
   // 成本：每一欄各自挑位數（同一欄跨組要互比），全部走同一個 fmtUsd——HTML 那邊同樣的規則，兩邊不會出現同值不同印法

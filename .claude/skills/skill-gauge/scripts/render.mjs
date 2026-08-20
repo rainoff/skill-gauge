@@ -851,7 +851,7 @@ function secBenefit(r) {
     ];
   });
   const inner = table(['檢查項', '類別', { html: '帶 skill', num: true }, { html: '不帶', num: true }, { html: '差', num: true }, '判讀'], trs) +
-    `<ul class="keypoints"><li>分類先看有沒有實質差（通過次數差 ≥1 次），沒有實質差才看水準。</li>` +
+    `<ul class="keypoints"><li>分類先看有沒有實質差（同母體＝通過次數差 ≥1 次；母體不等＝比率差過門檻並標「母體不等」），沒有實質差才看水準。</li>` +
     `<li><strong>負效益（帶 skill 反而差）</strong>＝幫倒忙的具體位置，改 skill 時最優先。</li>` +
     `<li><strong>正效益</strong>＝帶 skill 明顯多過，值得延伸的地方。</li>` +
     `<li><strong>兩邊都低</strong>＝出題問題或能力缺口，先改題目。</li>` +
