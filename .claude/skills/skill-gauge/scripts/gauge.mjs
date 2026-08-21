@@ -1131,7 +1131,10 @@ function buildReport(cfg, outDir) {
       else {
         // critic 三輪：豁免只給核可 gauge.json 的 matrix[] 真的有的格——--models／--efforts 臨時注入的格
         // 會整組取代核可網格（matrixCombos），先前一律豁免＝核可頁保證句在該路徑失實（roadmap:118 舊記缺口）
-        const cellApproved = Array.isArray(approvedCfg.matrix) && approvedCfg.matrix.some((m) => ((m?.executorModel ?? null) === (effR.executorModel ?? null)) && ((m?.effort ?? null) === (effR.executorEffort ?? null)));
+        // critic 四輪：比對必須用與 matrixCombos 逐字相同的解析——省略 executorModel（靠基準模型 fallback）
+        // 與 model 別名是核可網格的標準寫法，拿原始條目對解析後執行值會把核可格誤標成臨時格
+        const approvedCells = Array.isArray(approvedCfg.matrix) ? approvedCfg.matrix.map((m) => ({ model: m?.executorModel || m?.model || approvedCfg.executorModel || null, effort: m?.effort || null })) : [];
+        const cellApproved = approvedCells.some((c) => c.model === (effR.executorModel ?? null) && c.effort === (effR.executorEffort ?? null));
         if (!cellApproved) report.flags.push(`矩陣格與核可不同：${effR.executorModel ?? '（基準模型）'} × effort ${effR.executorEffort ?? '（未填）'} 不在核可的 matrix 網格裡（--models／--efforts 臨時格）——試跑口徑，不當正式結論`);
       }
     } }
@@ -2373,7 +2376,11 @@ async function main() {
   if (!COMMANDS.includes(cmd)) die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
   const needCfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'matrix', 'matrix-report', 'describe', 'history', 'preview'].includes(cmd) || (cmd === 'compare' && args.config);
   const cfg = needCfg ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
-  if (cfg && args.effort) { if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`); if (cfg.executorEffort !== args.effort) log(`⚠ --effort ${args.effort} 跟核可的 ${cfg.executorEffort ?? '（未填）'} 不同：這是試跑口徑，報告會標記，不當正式結論`); cfg.executorEffort = args.effort; }
+  if (cfg && args.effort) {
+    if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`);
+    if (cmd === 'matrix' || cmd === 'matrix-report') log(`⚠ --effort 在 matrix 不生效——格子的 effort 來自 gauge.json 的 matrix 網格或 --efforts；這個旗標已忽略`); // critic 四輪：先前警告說「報告會標記」但格子根本不吃它
+    else { if (cfg.executorEffort !== args.effort) log(`⚠ --effort ${args.effort} 跟核可的 ${cfg.executorEffort ?? '（未填）'} 不同：這是試跑口徑，報告會標記，不當正式結論`); cfg.executorEffort = args.effort; }
+  }
 
   if (cmd === 'compare') {
     if (cfg) {

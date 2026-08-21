@@ -1846,7 +1846,7 @@ ${sayHtml
     : blocked('成本估不出來（資料缺）——先確認 gauge.json 的題數／組數／次數，重出核可頁再核可');
   const tail = `${costPart}
 <p><strong>${blockers.length ? '⚠ 上面有補齊前不能核可的項目——補完、重出核可頁，再說「可以」。' : '適用的確認都成立 → 對 AI 說「可以」，它才會鎖定並開跑。'}</strong></p>
-<p>鎖定涵蓋的是${baselineOnly ? '預先登錄、gauge.json、題目、材料的檔案雜湊' : '預先登錄、gauge.json、題目、材料、skill 的檔案雜湊'}——這幾樣改了要重出核可頁、重新核可。執行次數（--runs）、effort（--effort）、評分模型（--judge-model）可由指令覆寫、不在鎖定範圍內：與核可不同時，執行當下會印警告、報告會標旗標。執行模型在 run／all 不吃覆寫；要換模型用 matrix——gauge.json 的 matrix 段是核可內容，用 --models／--efforts 臨時加格同樣會被警告並逐格標旗標。</p>`;
+<p>鎖定涵蓋的是${baselineOnly ? '預先登錄、gauge.json、題目、材料的檔案雜湊' : '預先登錄、gauge.json、題目、材料、skill 的檔案雜湊'}——這幾樣改了要重出核可頁、重新核可。執行次數（--runs）、effort（--effort）、評分模型（--judge-model）可由指令覆寫、不在鎖定範圍內：與核可不同時，執行當下會印警告、報告會標旗標。執行模型在 run／all 不吃覆寫；要換模型用 matrix——gauge.json 的 matrix 段是核可內容；用 --models／--efforts 臨時加格會先被警告，格子與核可網格不同時再逐格標旗標。</p>`;
   return section('three-questions', '你要回答的三個問題', [q1, q2, q3, tail].join('\n'), '下面各段是深究區——回答這三題不需要逐字讀完，但證據都在。');
 }
 

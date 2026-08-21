@@ -134,6 +134,25 @@ t('停案：屬量測層問題→建議段出「改題目」，三路線退誠�
   const cellDirs = fs.existsSync(outMx) ? fs.readdirSync(outMx, { withFileTypes: true }).filter((e) => e.isDirectory()) : [];
   const cellRep = cellDirs.length ? readJ(path.join(outMx, cellDirs[0].name, 'report.json')) : null;
   t('覆寫執法（critic 三輪 🔴）：--models 臨時格＝逐格「矩陣格與核可不同」旗標＋CLI 警告', rm2.code === 0 && /⚠ --models／--efforts 是臨時格/.test(rm2.out) && !!cellRep && cellRep.flags.some((f) => /矩陣格與核可不同/.test(f) && /stub-x/.test(f)), JSON.stringify(cellRep?.flags?.filter((f) => /矩陣格/.test(f))) + rm2.out.slice(-200));
+  // critic 四輪 🔴 陰性：核可網格用「省略 executorModel」與「model 別名」的標準寫法——解析後比對，不得誤標臨時格
+  const fxm = path.join(work, 'fixture-mx');
+  fs.cpSync(FIXTURE, fxm, { recursive: true });
+  const CFGM = path.join(fxm, 'gauge', 'gauge.json');
+  for (const f of ['lock.json', 'history.jsonl']) fs.rmSync(path.join(fxm, 'gauge', f), { force: true });
+  if (fs.existsSync(path.join(fxm, 'gauge', 'runs'))) fs.rmSync(path.join(fxm, 'gauge', 'runs'), { recursive: true, force: true });
+  for (const f of fs.readdirSync(path.join(fxm, 'gauge'))) if (f.startsWith('lock.prev-')) fs.rmSync(path.join(fxm, 'gauge', f));
+  { const gm = readJ(CFGM); gm.matrix = [{ effort: 'low' }, { model: gm.executorModel }]; fs.writeFileSync(CFGM, JSON.stringify(gm, null, 2)); }
+  let rmx = run(['lock', '--config', CFGM]); t('矩陣陰性：省略式網格 lock 成功', rmx.code === 0, rmx.out.slice(-200));
+  const outMxA = path.join(work, 'out-mx-approved');
+  rmx = run(['matrix', '--config', CFGM, '--out', outMxA, '--runs', '1']);
+  const mxCells = fs.existsSync(outMxA) ? fs.readdirSync(outMxA, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => readJ(path.join(outMxA, e.name, 'report.json'))) : [];
+  t('矩陣陰性（critic 四輪 🔴）：省略 executorModel／model 別名的核可格——零「矩陣格與核可不同」旗標、零臨時格警告、page 試跑口徑恰為 1 項（只有 --runs，矩陣零貢獻）', rmx.code === 0 && mxCells.length === 2 && mxCells.every((r2) => !(r2.flags || []).some((f) => /矩陣格與核可不同/.test(f))) && !/是臨時格/.test(rmx.out) && fs.readdirSync(outMxA, { withFileTypes: true }).filter((e) => e.isDirectory()).every((e) => /試跑口徑：1 項執行條件與核可不同/.test(fs.readFileSync(path.join(outMxA, e.name, 'page.html'), 'utf8'))), JSON.stringify(mxCells.map((r2) => (r2.flags || []).filter((f) => /矩陣格|核可不同/.test(f)))) + rmx.out.slice(-200));
+  const outMxE = path.join(work, 'out-mx-equal');
+  const rme = run(['matrix', '--config', CFGM, '--out', outMxE, '--models', String(readJ(CFGM).executorModel), '--runs', '1']);
+  const eqCells = fs.existsSync(outMxE) ? fs.readdirSync(outMxE, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => readJ(path.join(outMxE, e.name, 'report.json'))) : [];
+  t('矩陣（critic 四輪 🟡）：臨時格恰等於核可格——CLI 有警告、零矩陣格旗標（契約句的限定為真）', rme.code === 0 && /是臨時格/.test(rme.out) && eqCells.length === 1 && !(eqCells[0].flags || []).some((f) => /矩陣格與核可不同/.test(f)));
+  const rmeff = run(['matrix', '--config', CFGM, '--out', path.join(work, 'out-mx-eff'), '--runs', '1', '--effort', 'low']);
+  t('矩陣（critic 四輪 🟡）：--effort 在 matrix 印「不生效」誠實警告、不再宣稱「報告會標記」', /⚠ --effort 在 matrix 不生效/.test(rmeff.out) && !/--effort low 跟核可的/.test(rmeff.out));
 }
 // 8. baseline 模式（gauge.json 去掉 skill）
 const g = readJ(CFG); delete g.skill; fs.writeFileSync(CFG, JSON.stringify(g, null, 2));
