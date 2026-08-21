@@ -43,7 +43,7 @@ r = run(['lock', '--config', CFG, '--relock']); t('--relock 成功且留下舊�
   const htmlLocked = fs.existsSync(outLocked) ? fs.readFileSync(outLocked, 'utf8') : '';
   t('preview（已鎖定）exit 0，提到已鎖定', r.code === 0 && /已鎖定/.test(htmlLocked), r.out.slice(-300));
   t('preview v2：三問卡在頁首（位置先於量測概覽）、教具頁無「翻車」', /你要回答的三個問題/.test(htmlLocked) && htmlLocked.indexOf('你要回答的三個問題') < htmlLocked.indexOf('量測概覽') && !/翻車/.test(htmlLocked));
-  t('preview v2（critic 🔴1）：教具三組——臂數句「3 組」資料驅動、無寫死「兩組拿到」；prereg 齊全走通行尾句', /3 組拿到的是逐字相同/.test(htmlLocked) && !/兩組拿到的是逐字相同/.test(htmlLocked) && /適用的確認都成立/.test(htmlLocked));
+  t('preview v2（critic 🔴1 完整版）：教具三組——臂名句、確認③「各組」、無「兩組拿到」與「兩組共用的指令」；prereg 齊全走通行尾句', /3 組（with／without／reminder）拿到的是逐字相同/.test(htmlLocked) && /前置檢查各組都做得到/.test(htmlLocked) && !/兩組拿到的是逐字相同/.test(htmlLocked) && !/兩組共用的指令/.test(htmlLocked) && /適用的確認都成立/.test(htmlLocked));
   const promptPath = path.join(fx, 'gauge', 'case-01-trap.prompt.md');
   const savedPrompt = fs.readFileSync(promptPath, 'utf8');
   fs.writeFileSync(promptPath, savedPrompt + '\n\n（e2e 測試改動）');
@@ -120,6 +120,14 @@ t('停案：壓力題三組都守住→旗標「零鑑別／基準組守住」�
 t('停案：決策摘要照 v2 版型出七行，成功率／情境地圖都改「未完成同題組同次數的兩臂比較」', (() => { const d = repS?.decisionFirst || []; const pick = (tag) => d.find((l) => l.startsWith(tag)) || ''; return ['【結論】', '【成功率】', '【情境地圖】', '【效果】', '【穩度】', '【成本】', '【邊界】'].every((tag) => pick(tag)) && /未完成同題組同次數的兩臂比較/.test(pick('【成功率】')) && /未完成同題組同次數的兩臂比較/.test(pick('【情境地圖】')); })(), JSON.stringify(repS?.decisionFirst));
 t('停案：成本行標「效率價值未判」，且全文不出現「只跑了基準組」「成本臂」', (() => { const d = (repS?.decisionFirst || []).join(''); return /效率價值未判/.test(d) && !/只跑了基準組/.test(d) && !/成本臂/.test(d); })());
 t('停案：屬量測層問題→建議段出「改題目」，三路線退誠實句', (() => { const d = repS?.decisionFirst || []; return d.some((l) => l.startsWith('【建議·改題目】')) && d.some((l) => /^【建議·改 skill】未完成同題組同次數的兩臂比較/.test(l)); })());
+// 9b. 覆寫執法（critic 新 🔴 補齊後的管線已知答案）：--effort／--judge-model 與核可不同 → 報告旗標
+{
+  const outEff = path.join(work, 'out-eff');
+  const re = run(['all', '--config', CFG, '--out', outEff, '--runs', '1', '--effort', 'low', '--judge-model', 'stub-judge']);
+  const repE = fs.existsSync(path.join(outEff, 'report.json')) ? readJ(path.join(outEff, 'report.json')) : null;
+  t('覆寫執法：--effort 與 --judge-model 偏離核可 → 各得一支「與核可不同」旗標', re.code === 0 && !!repE && repE.flags.some((f) => /effort與核可不同/.test(f) && /--effort 覆寫/.test(f)) && repE.flags.some((f) => /評分模型與核可不同/.test(f) && /--judge-model 覆寫/.test(f)), JSON.stringify(repE?.flags?.filter((f) => /核可不同/.test(f))));
+  t('覆寫執法（陰性）：主跑（無覆寫）沒有「與核可不同」旗標（--runs 1 除外）', !(rep?.flags || []).some((f) => /effort與核可不同|評分模型與核可不同|執行模型與核可不同/.test(f)));
+}
 // 8. baseline 模式（gauge.json 去掉 skill）
 const g = readJ(CFG); delete g.skill; fs.writeFileSync(CFG, JSON.stringify(g, null, 2));
 const outB = path.join(work, 'out-baseline');

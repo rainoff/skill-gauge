@@ -1119,7 +1119,16 @@ function buildReport(cfg, outDir) {
   if (report.lock.engineAtLock && report.lock.engineAtLock !== ENGINE_VERSION) report.flags.push(`引擎版本與鎖定時不同：鎖定時 ${report.lock.engineAtLock}、現在 ${ENGINE_VERSION}——評分提示或計分邏輯可能已變，跨版本比較要小心`);
   { const effP = path.join(outDir, 'effective.json'); const effR = fs.existsSync(effP) ? readJSON(effP) : null;
     let lockedRuns = null; try { lockedRuns = Number(readJSON(path.join(cfg.__dir, 'gauge.json')).runs || 3); } catch { lockedRuns = null; }
-    if (effR && effR.runs != null && lockedRuns != null && Number(effR.runs) !== lockedRuns) report.flags.push(`次數與核可不同：gauge.json 寫 ${lockedRuns} 次、實際執行 ${effR.runs} 次（--runs 覆寫）——試跑口徑，不當正式結論`); }
+    if (effR && effR.runs != null && lockedRuns != null && Number(effR.runs) !== lockedRuns) report.flags.push(`次數與核可不同：gauge.json 寫 ${lockedRuns} 次、實際執行 ${effR.runs} 次（--runs 覆寫）——試跑口徑，不當正式結論`);
+    // critic 二輪（preview v2 契約句核對）抓到：先前只有 --runs 有這個旗標，effort／評分模型覆寫零警告零旗標，
+    // 核可頁的「報告會標記」因此失實。補齊執法：effective.json vs 核可時 gauge.json 逐項比對。
+    // matrix 格的 executorModel／executorEffort 是核可過的網格內容（gauge.json 的 matrix 段），豁免不比。
+    let approvedCfg = null; try { approvedCfg = readJSON(path.join(cfg.__dir, 'gauge.json')); } catch { approvedCfg = null; }
+    if (effR && approvedCfg) {
+      const cmp = (key, label, how) => { const a = approvedCfg[key] ?? null, e = effR[key] ?? null; if (e !== null && a !== e) report.flags.push(`${label}與核可不同：gauge.json 寫 ${a ?? '（未填）'}、實際執行 ${e}（${how} 覆寫）——試跑口徑，不當正式結論`); };
+      cmp('judgeModel', '評分模型', '--judge-model');
+      if (!cfg.__matrixCell) { cmp('executorEffort', 'effort', '--effort'); cmp('executorModel', '執行模型', '設定層'); }
+    } }
   report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下', process.env.GAUGE_ENV_PASSTHROUGH === '1' ? '⚠ 環境變數整份放行（GAUGE_ENV_PASSTHROUGH=1）' : '環境變數白名單'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
   if (cfg.__matrixCell) report.matrixCell = cfg.__matrixCell;
   report.summary = plainSummary(report);
@@ -2355,7 +2364,7 @@ async function main() {
   if (!COMMANDS.includes(cmd)) die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
   const needCfg = ['lock', 'trigger', 'run', 'grade', 'report', 'all', 'baseline', 'matrix', 'matrix-report', 'describe', 'history', 'preview'].includes(cmd) || (cmd === 'compare' && args.config);
   const cfg = needCfg ? loadConfig(args.config || (args.out && fs.existsSync(path.join(args.out, 'gauge.json')) ? path.join(args.out, 'gauge.json') : undefined)) : null;
-  if (cfg && args.effort) { if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`); cfg.executorEffort = args.effort; }
+  if (cfg && args.effort) { if (!EFFORT_LEVELS.includes(args.effort)) die(`--effort 必須是 ${EFFORT_LEVELS.join('/')}`); if (cfg.executorEffort !== args.effort) log(`⚠ --effort ${args.effort} 跟核可的 ${cfg.executorEffort ?? '（未填）'} 不同：這是試跑口徑，報告會標記，不當正式結論`); cfg.executorEffort = args.effort; }
 
   if (cmd === 'compare') {
     if (cfg) {
@@ -2435,6 +2444,7 @@ async function main() {
   if (!Number.isInteger(parallel) || parallel < 1) die(`--parallel 必須是 ≥1 的整數，收到：${args.parallel}`);
   if (args.runs !== undefined && runs !== cfg.runs) log(`⚠ --runs ${runs} 跟核可頁寫死的 ${cfg.runs} 不同：這是試跑口徑，報告會標記，不當正式結論`);
   const judgeModel = args['judge-model'] || cfg.judgeModel;
+  if (args['judge-model'] && args['judge-model'] !== cfg.judgeModel) log(`⚠ --judge-model ${args['judge-model']} 跟核可的 ${cfg.judgeModel ?? '（未填）'} 不同：這是試跑口徑，報告會標記，不當正式結論`);
   if (args['judge-model']) cfg.judgeModel = args['judge-model']; // 報告與 history 記實際生效的評分模型
   if (args.runs) cfg.runs = runs;
 

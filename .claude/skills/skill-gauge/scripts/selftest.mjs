@@ -1133,13 +1133,17 @@ try {
   const fullPrev = R.renderPreviewHtml(mkPrev(), {});
   t('preview v2：Q1 題目表＋Q2 兩組句＋自檢 chip 行＋Q3 原文＋確認④⑤＋成本行＋通行尾句', /塞了假日期/.test(fullPrev) && /兩組拿到的是逐字相同/.test(fullPrev) && /引擎自檢：/.test(fullPrev) && /沒有出現受測 skill 的名字/.test(fullPrev) && /只限這次條件/.test(fullPrev) && /因果通則/.test(fullPrev) && /確認④/.test(fullPrev) && /42 次模型呼叫/.test(fullPrev) && /停案時最少 30 次/.test(fullPrev) && /確認⑤/.test(fullPrev) && /適用的確認都成立/.test(fullPrev));
   const threeArm = R.renderPreviewHtml(mkPrev({ arms: [{ name: 'with' }, { name: 'without' }, { name: 'reminder' }] }), {});
-  t('preview v2（critic 🔴1）：三組配置——臂數句資料驅動、不出現寫死的「兩組拿到」', /3 組拿到的是逐字相同/.test(threeArm) && !/兩組拿到的是逐字相同/.test(threeArm));
+  t('preview v2（critic 🔴1 完整版）：三組配置——臂名列舉、整頁零「兩組」（含確認③與深究區標題）', /3 組（with／without／reminder）拿到的是逐字相同/.test(threeArm) && !/兩組/.test(threeArm) && /前置檢查各組都做得到/.test(threeArm));
+  const fourArm = R.renderPreviewHtml(mkPrev({ arms: [{ name: 'with' }, { name: 'without' }, { name: 'reminder' }, { name: 'viz-explain' }] }), {});
+  t('preview v2（critic 建議 2）：四組配置——臂名全列、無寫死「第三組的替代品」列舉、整頁零「兩組」', /4 組（with／without／reminder／viz-explain）拿到的是逐字相同/.test(fourArm) && !/第三組的替代品/.test(fourArm) && !/兩組/.test(fourArm));
   const baseOnly = R.renderPreviewHtml(mkPrev({ baselineOnly: true, arms: [{ name: 'baseline' }], checks: [{ id: 'prompt-mentions-skill-name', ok: null, text: '沒有受測 skill，這條不適用。' }] }), {});
   t('preview v2（critic 🔴2）：baseline-only——洩題卡標不適用、無②③勾選框、無對照組事實句', /只量基準組做不做得到——洩題這一題不適用/.test(baseOnly) && !/☐ 確認②/.test(baseOnly) && !/☐ 確認③/.test(baseOnly) && !/拿到的是逐字相同/.test(baseOnly));
   const noCost = R.renderPreviewHtml(mkPrev({ cost: {} }), {});
   t('preview v2（critic 🟡6）：成本估不出來 → ⚠ 阻擋、無 ☐ 確認⑤、尾句改口', /成本估不出來/.test(noCost) && !/☐ 確認⑤/.test(noCost) && !/適用的確認都成立/.test(noCost));
   const noCases = R.renderPreviewHtml(mkPrev({ cases: [] }), {});
-  t('preview v2（critic nit）：無題目——「先出題再核可」且不出指路句', /還沒有題目——先出題再核可/.test(noCases) && !/深究區的「題組」段/.test(noCases));
+  t('preview v2（critic 建議 3）：無題目＝⚠ 阻擋——尾句改口、不給「說可以」通路、不出指路句', /還沒有題目——先出題、重出核可頁/.test(noCases) && !/適用的確認都成立/.test(noCases) && !/深究區的「題組」段/.test(noCases));
+  t('preview v2（critic 建議 4）：baseline-only 尾句雜湊清單不含 skill；一般配置含 skill', /預先登錄、gauge.json、題目、材料 的檔案雜湊/.test(baseOnly) && !/材料、skill 的檔案雜湊/.test(baseOnly) && /材料、skill 的檔案雜湊/.test(fullPrev));
+  t('preview v2（critic 新 🔴）：尾句契約句與執法一致——點名 --runs／--effort／--judge-model、明說執行模型不吃覆寫', /--runs/.test(fullPrev) && /--effort/.test(fullPrev) && /--judge-model/.test(fullPrev) && /執行模型在 run／all 不吃覆寫/.test(fullPrev));
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
 // 外掛揭露（plugin disclosure，1.2.1＋R1 修正；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對
