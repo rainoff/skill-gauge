@@ -162,6 +162,11 @@ const rps = spawnSync(process.execPath, [ENGINE, 'all', '--config', CFG2, '--out
 const repPS = fs.existsSync(path.join(outPS, 'report.json')) ? readJ(path.join(outPS, 'report.json')) : null;
 t('外掛揭露：帶 payload 的停案（STOP）結論行出低估警語', rps.status === 3 && /「沒必要」可能是低估的誤判/.test(repPS?.decisionFirst?.[0] || ''), (repPS?.decisionFirst?.[0] || '') + ((rps.stdout || '') + (rps.stderr || '')).slice(-200));
 
+// 10. v1.3 給人看的一頁（page.html）
+t('page：all 產出 page.html，無任何 assertion id、有誰能動手與界線句', fs.existsSync(path.join(outAll, 'page.html')) && (() => { const h = fs.readFileSync(path.join(outAll, 'page.html'), 'utf8'); return Object.keys(rep.assertions || {}).every((id) => !h.includes(id)) && /誰能動手/.test(h) && /這一頁不代答/.test(h); })());
+t('page：html 重出也出 page.html', (() => { const d = path.join(work, 'html-redo'); fs.mkdirSync(d, { recursive: true }); fs.copyFileSync(path.join(outAll, 'report.json'), path.join(d, 'report.json')); const rr = run(['html', '--out', d]); return rr.code === 0 && fs.existsSync(path.join(d, 'page.html')); })());
+t('page：舊報告（無 personPage）→ 誠實缺頁句，不捏造', (() => { const d = path.join(work, 'html-old'); fs.mkdirSync(d, { recursive: true }); const o = readJ(path.join(outAll, 'report.json')); delete o.personPage; delete o.decisionFirstData; fs.writeFileSync(path.join(d, 'report.json'), JSON.stringify(o)); const rr = run(['html', '--out', d]); const h = fs.existsSync(path.join(d, 'page.html')) ? fs.readFileSync(path.join(d, 'page.html'), 'utf8') : ''; return rr.code === 0 && /這一頁出不來/.test(h); })());
+
 console.log(`\n${n - bad}/${n} 通過`);
 if (!bad) { fs.rmSync(work, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
 else console.log(`（失敗，保留 ${work} 與 ${root} 供檢查）`);

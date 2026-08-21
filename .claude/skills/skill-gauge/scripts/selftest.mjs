@@ -4,7 +4,7 @@ process.env.GAUGE_NO_MAIN = '1';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict, comparabilityIssue, baselineVerdict } = await import('./gauge.mjs');
+const { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, buildPersonPage, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict, comparabilityIssue, baselineVerdict } = await import('./gauge.mjs');
 let n = 0, bad = 0; const t = (name, cond) => { n++; if (!cond) { bad++; console.log('✗', name); } else console.log('✓', name); };
 
 // 祖先掃描：有 .claude 的上層要被抓到，自己這層不算
@@ -1249,6 +1249,38 @@ try {
   const stopLines = decisionFirstLines(stopR(hit)), stopLinesNo = decisionFirstLines(stopR(null));
   t('STOP 整合：結論行帶低估警語；無 subjectPlugin 不帶', /低估的誤判/.test(stopLines[0]) && !/低估的誤判/.test(stopLinesNo[0]));
   fs.rmSync(pd, { recursive: true, force: true });
+}
+
+// v1.3 給人看的一頁：buildPersonPage 已知答案＋renderer 紀律（陽性陰性；spec: gauge/v13-page-dev/spec.md）
+{
+  const mkRep = () => ({
+    name: 'pp-fx', arms: ['with', 'without'],
+    decisionFirstData: { verdict: { kind: 'keep', label: '可留用' } },
+    decisionFirst: ['【結論】pp-fx：可留用——demo', '【邊界】這次測量可說明 X；無法說明 Y。', '【建議·改 skill】卡住的預期檢查：fact-aaa（帶 2/3、不帶 1/3）', '【建議·改用法】先用在高全對情境', '【建議·發掘】延伸'],
+    assertions: { 'fact-aaa': { family: 'fact', text: 'T', label: '日期不能捏造', arms: {} }, 'judgment-bbb': { family: 'judgment', text: 'T2', label: null, arms: {} } },
+    cases: [
+      { id: 'case-01-trap', type: 'trap', note: '塞了假日期的會議紀錄', arms: { with: { invalidRuns: 0, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 2, scenario: { success: 1, notFirstPass: 2 } } } },
+      { id: 'case-02-clean', type: 'clean', note: null, arms: { with: { invalidRuns: 0, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 0, scenario: { success: 2, notFirstPass: 1 } } } },
+    ],
+    cost: { with: { perSuccessCostUsd: 0.01, costComplete: true, sumCostUsd: 0.05, successRuns: 5 }, without: {} },
+    flags: ['前置檢查沒過集中：without 組有 2/3 次沒過前置檢查——測試用', '零鑑別：judgment-bbb 兩組全過——測不出差別'],
+    trigger: { should: { fired: 5, n: 6 }, shouldNot: { fired: 0, n: 12 } },
+  });
+  const pp = buildPersonPage(mkRep());
+  t('personPage：全分母與主讀數已知答案（full 5/6 vs 3/6；informative＝case-01 3/3 vs 1/3）', pp.successRate.full.with.n === 5 && pp.successRate.full.with.d === 6 && pp.successRate.full.without.n === 3 && pp.successRate.full.without.d === 6 && pp.successRate.informative.with.n === 3 && pp.successRate.informative.with.d === 3 && pp.successRate.informative.without.n === 1 && JSON.stringify(pp.successRate.informative.caseIds) === '["case-01-trap"]');
+  t('personPage：修正值已知答案（gap 2、不帶側 gate-false 2 → 區間 0〜2）', (() => { const c = pp.successRate.corrections[0]; return c && c.gap === 2 && c.range.min === 0 && c.range.max === 2 && c.counts.without === 2 && c.counts.with === 0; })());
+  t('personPage：findings——集中型標歸因未定案＋分開做法；零鑑別的 id 換 family 白話', (() => { const f0 = pp.findings[0], f1 = pp.findings[1]; return f0.attribution === 'undetermined' && /內嵌在指令/.test(f0.separationHint) && f1.attribution === 'as-stated' && !/judgment-bbb/.test(f1.text) && /一條判斷檢查/.test(f1.text); })());
+  t('personPage：建議行配 actor；id 換 label', (() => { const n0 = pp.next.find((x) => x.tag === '改 skill'); return n0 && /skill 的擁有者/.test(n0.actor) && !/fact-aaa/.test(n0.text) && /日期不能捏造/.test(n0.text); })());
+  t('personPage：map thin 徽章（d≤3）＋note 標籤與 id fallback', pp.map[0].thin === true && pp.map[0].label === '塞了假日期的會議紀錄' && pp.map[1].label === 'clean');
+  t('personPage（陰性）：無 decisionFirstData 的舊報告回 null', buildPersonPage({ name: 'old', arms: ['with', 'without'], cases: [] }) === null);
+  try {
+    const R2 = await import('./render.mjs');
+    const rep = mkRep(); rep.personPage = pp;
+    const html = R2.renderPersonPageHtml(rep);
+    t('page render：五段＋誰能動手＋算式＋樣本量句都在', ['結論', '情境地圖', '發現', '邊界', '下一步'].every((k) => html.includes(k)) && /誰能動手/.test(html) && /＝總花費/.test(html) && /這 12 次裡沒有/.test(html));
+    t('page render（禁詞）：無 assertion id、無「相似度」、無外部資源', !/fact-aaa|judgment-bbb/.test(html) && !/相似度/.test(html) && !/(src|href)=["']https?:\/\//.test(html));
+    t('page render（陰性）：無 personPage → 誠實缺頁句', /這一頁出不來/.test(R2.renderPersonPageHtml({ name: 'old' })));
+  } catch (e) { t('page render 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 }
 
 fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(mdir, { recursive: true, force: true });

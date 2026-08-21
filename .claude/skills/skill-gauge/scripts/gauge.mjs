@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.2.1';
+const ENGINE_VERSION = '1.3.0';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
@@ -942,7 +942,7 @@ function buildReport(cfg, outDir) {
       }
     }
   }
-  report.cases = cfg.cases.map((c) => ({ id: c.id, type: c.type || null, arms: perCase[c.id] }));
+  report.cases = cfg.cases.map((c) => ({ id: c.id, type: c.type || null, note: c.note || null, arms: perCase[c.id] }));
   // 行為足跡：帶 skill 那組是不是真的載入了 skill？兩組產出差多少（跨組相似度 vs 同組內相似度）
   const A0 = cfg.arms[0]?.name, B0 = cfg.arms[1]?.name;
   const fp = { armWith: A0, fired: 0, known: 0, negativeFired: 0, negativeKnown: 0, cases: [] };
@@ -1125,6 +1125,7 @@ function buildReport(cfg, outDir) {
   report.summary = plainSummary(report);
   // 同一組判定出兩份：decisionFirst＝人看的逐句、decisionFirstData＝機器讀的結構化欄位（不必解析中文或依賴陣列位置）
   { const core = decisionFirstCore(report); report.decisionFirst = core.lines; report.decisionFirstData = core.data; }
+  report.personPage = buildPersonPage(report);
   return report;
 }
 
@@ -1611,6 +1612,82 @@ function decisionFirstMarkdown(r) {
   return ['## 決策摘要（第一頁）', '', ...lines.map((l) => `> ${l}`), '', '（以下維持引擎既有輸出，供想深究的人查——差幾格、反轉數、相似度、逐格表都在下面。）', ''];
 }
 
+
+// ---------- 給人看的一頁（v1.3）：從 report.json 派生 personPage 結構化資料 ----------
+// 數字邏輯全在這裡（selftest 打已知答案）；render.mjs 只排版。來源：docs/roadmap.md「v1.3 候選」＋
+// 三位讀者角色 2/5 逐字回饋（維護者本機 gauge/v13-page-dev/spec.md）。頁面五段：結論／情境地圖／發現／邊界／下一步；
+// 不出現 assertion id、計分格數、相似度——id 一律換白話 label（沒 label 就換 family 白話），這是機械規則不是排版偏好。
+const FAMILY_ZH = { gate: '一條前置檢查', fact: '一條事實檢查', judgment: '一條判斷檢查', orientation: '一條取向觀察' };
+function buildPersonPage(r) {
+  const arms = r?.arms || [];
+  if (arms.length < 2) return null;
+  const A = arms[0], B = arms[1];
+  const df = r.decisionFirstData;
+  if (!df || !df.verdict) return null; // 舊報告（無結構化裁決）：頁面走誠實缺頁句
+  const dfl = r.decisionFirst || [];
+  const pick = (tag) => dfl.find((l) => l.startsWith(tag)) || null;
+  // assertion id → 白話：label 優先，沒 label 用 family 白話；兩者皆無才留原樣
+  const labelOfId = (id) => { const a = r.assertions?.[id]; if (!a) return null; return a.label || FAMILY_ZH[a.family] || null; };
+  const deTech = (text) => String(text ?? '').replace(/[A-Za-z][A-Za-z0-9_]*(?:[-:][A-Za-z0-9_-]+)+/g, (m) => labelOfId(m) || m);
+  // 場景列（全對制逐題）：invalidRuns＝沒過前置檢查（gate-false）的次數（buildReport 已逐題逐臂在數）
+  const caseRows = (r.cases || []).map((c) => {
+    const pa = c.arms?.[A] || {}, pb = c.arms?.[B] || {};
+    const den = (sc) => sc ? (sc.success || 0) + (sc.notFirstPass || 0) : 0;
+    return { id: c.id, type: c.type || null, note: c.note || null,
+      with: { n: pa.scenario?.success || 0, d: den(pa.scenario) },
+      without: { n: pb.scenario?.success || 0, d: den(pb.scenario) },
+      gateFalse: { with: pa.invalidRuns || 0, without: pb.invalidRuns || 0 } };
+  }).filter((x) => x.with.d > 0 || x.without.d > 0);
+  const sum = (rows, side) => rows.reduce((a, x) => ({ n: a.n + x[side].n, d: a.d + x[side].d }), { n: 0, d: 0 });
+  const full = { with: sum(caseRows, 'with'), without: sum(caseRows, 'without') };
+  // 「測得出差別的情境」＝兩組都有資料且全對次數不同的題——主讀數用它；全分母同時給，兩個都印（roadmap：同一份資料兩種讀法都要出）
+  const infRows = caseRows.filter((x) => x.with.d > 0 && x.without.d > 0 && x.with.n !== x.without.n);
+  const informative = infRows.length ? { with: sum(infRows, 'with'), without: sum(infRows, 'without'), caseIds: infRows.map((x) => x.id) } : null;
+  // 修正值（「打折要給數字」的機械化）：沒過前置檢查的次數若全數改判成功（最壞回歸），差距的區間
+  const kW = caseRows.reduce((a, x) => a + x.gateFalse.with, 0), kWo = caseRows.reduce((a, x) => a + x.gateFalse.without, 0);
+  const corrections = [];
+  if (full.with.d > 0 && full.with.d === full.without.d && (kW + kWo) > 0) {
+    const gap = full.with.n - full.without.n;
+    corrections.push({ kind: 'gate-false-reattribution', gap, counts: { with: kW, without: kWo }, range: { min: gap - kWo, max: gap + kW } });
+  }
+  // 每個派生數字都帶算式件（分子／分母），頁面照件印，不出孤兒數字
+  const numbers = {};
+  for (const [key, arm] of [['with', A], ['without', B]]) {
+    const c = r.cost?.[arm] || {};
+    if (c.perSuccessCostUsd != null && c.costComplete && c.sumCostUsd != null && c.successRuns) {
+      numbers[key] = { perSuccessCostUsd: { value: c.perSuccessCostUsd, numerator: c.sumCostUsd, denominator: c.successRuns } };
+    }
+  }
+  // 發現：flags 逐條過 deTech；「前置檢查沒過集中」型＝歸因未定案＋兩個候選解釋＋分開做法（roadmap 歸因紀律：
+  // 標成雜訊／痕跡的現象必須寫出能與真效果分開的具體做法，否則不得寫成已定案）
+  const findings = (r.flags || []).map((f) => {
+    if (f.startsWith('前置檢查沒過集中')) return {
+      text: deTech(f), attribution: 'undetermined',
+      alternatives: ['出題方式的痕跡（例如材料的給法讓某一組比較吃虧，或前置檢查寫成了 skill 專屬格式）', 'skill 真的改變了模型讀材料／交付的行為——那是效果，不是雜訊'],
+      separationHint: '把該情境的材料換一種給法（內嵌在指令 vs 存成檔案）重跑同一題：集中若消失＝出題痕跡；仍在＝skill 的真實影響。分不開之前，這現象不能當雜訊扣掉，也不能當效果加回來。' };
+    return { text: deTech(f), attribution: 'as-stated' };
+  });
+  // 下一步：決策摘要的建議行（引擎自產 tag）配「誰能動手」
+  const ACTORS = [['【建議·改題目】', '出題的人（跑這次量測的人）'], ['【建議·改 skill】', 'skill 的擁有者（能改 SKILL.md 的人）'], ['【建議·改用法】', '使用它的人（不用改任何檔案）'], ['【建議·發掘】', '使用它的人（不用改任何檔案）']];
+  const next = dfl.filter((l) => l.startsWith('【建議·')).map((l) => {
+    const hit = ACTORS.find(([tag]) => l.startsWith(tag));
+    return { tag: hit ? hit[0].slice('【建議·'.length, -1) : null, actor: hit ? hit[1] : null, text: deTech(hit ? l.slice(hit[0].length) : l) };
+  });
+  return {
+    conclusion: {
+      label: df.verdict.label || null, kind: df.verdict.kind || null, line: deTech(pick('【結論】')),
+      scope: '這一頁回答的是「它宣稱會做的做到了嗎」「哪些情境行、哪些不行」；值不值得留在工作流裡，要拿這一頁對照你的成本與替代方案自己裁——這一頁不代答。',
+    },
+    successRate: { full, informative, corrections },
+    map: caseRows.map((x) => ({ id: x.id, type: x.type, label: x.note || x.id.replace(/^case-\d+-/, ''), with: x.with, without: x.without, thin: (x.with.d > 0 && x.with.d <= 3) || (x.without.d > 0 && x.without.d <= 3) })),
+    findings,
+    boundary: { line: deTech(pick('【邊界】')) },
+    next,
+    trigger: r.trigger ? { should: { fired: r.trigger.should?.fired ?? null, n: r.trigger.should?.n ?? null }, shouldNot: { fired: r.trigger.shouldNot?.fired ?? null, n: r.trigger.shouldNot?.n ?? null } } : null,
+    numbers,
+  };
+}
+
 function reportMarkdown(cfg, r) {
   const arms = r.arms;
   const L = [];
@@ -1757,7 +1834,13 @@ async function writeHtml(outDir, data, kind) {
   const fn = kind === 'report' ? R.renderReportHtml : kind === 'matrix' ? R.renderMatrixHtml : R.renderDescribeHtml;
   if (typeof fn !== 'function') return null;
   const p = path.join(outDir, `${kind}.html`);
-  try { fs.writeFileSync(p, fn(data, {})); return p; } catch (e) { log(`⚠ ${kind}.html 產生失敗：${e?.message || e}`); return null; }
+  let out = null;
+  try { fs.writeFileSync(p, fn(data, {})); out = p; } catch (e) { log(`⚠ ${kind}.html 產生失敗：${e?.message || e}`); }
+  // v1.3：report 同時出「給人看的一頁」（page.html）——writeReport／html 重出／matrix 重出全走這個咽喉點
+  if (kind === 'report' && typeof R.renderPersonPageHtml === 'function') {
+    try { fs.writeFileSync(path.join(outDir, 'page.html'), R.renderPersonPageHtml(data, {})); } catch (e) { log(`⚠ page.html 產生失敗：${e?.message || e}`); }
+  }
+  return out;
 }
 async function writeReport(cfg, outDir, { history = true } = {}) {
   const r = buildReport(cfg, outDir);
@@ -2340,5 +2423,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue, baselineVerdict };
+export { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, buildPersonPage, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue, baselineVerdict };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));
