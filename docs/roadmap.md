@@ -57,6 +57,7 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 外掛（plugin）與帶 hook 的受測物是個問題。目前的隔離做法載不到使用者層的外掛。效果測量現在只能不隔離著跑，並且要標明這件事。之後要另外設計解法。（1.2.1 起引擎會自動偵測並在報告【邊界】揭露，見 testing.md 2026-08-21 三列；揭露不等於能量測）
 - 外掛偵測掃描的殘餘加固（2026-08-21 codex R3 建議，不影響現版正確性）：總 entry／enqueue 上限（單層極寬目錄仍會先推入全部子目錄）；用 fs adapter 注入的方式測讀取失敗路徑（避開跨平台 chmod 不穩）；把 soft 與 refs-only 的整合斷言拆開改善失敗定位。
 - 給人看的一頁（v1.3）的殘餘加固（2026-08-21 codex v1.3-R3 建議，不影響現版正確性）：renderer／檔案系統可注入 adapter，補 page 產出失敗的非零退出 runtime 測試；S-11 guard 再驗兩臂 n/d/pct 完整性；出題 schema 考慮強制 assertion id 帶連字號（根絕 id 撞散文英文字的殘餘）。
+- 給人看的一頁的 sanitizer 既存邊界案例（2026-08-21 codex v1.3-R4 出口輪列記，fb5edb3 前即存在、非 regression）：①「替換後合成 id」組合鏈（id x 的 label 恰好與另一 id 的前綴拼得起來時，替換完反而拼出裸 id）；②嵌入式 token（note 裡 `prefixfact-x` 這種單字內夾 id——ASCII 邊界視為字內不動，但 raw substring 掃描器看得到）——要先定義「禁 token」還是「禁任何 substring」，再做最終 leak detector，不可用 naive 固定點替換（會循環）；③case note 的 $ 全族測試。
 - Windows 上的引擎實跑（程式寫了 `shell:true` 與 `--root`，還沒在 Windows 跑過）；MCP 的已知答案題。
 - 成本硬上限（`--max-cost-usd` 那種：撞到就中止並報部分結果）。
 
