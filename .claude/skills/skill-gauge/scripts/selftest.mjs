@@ -1120,6 +1120,15 @@ try {
   t('preview render：無外部資源', !/(src|href)=["']https?:\/\//.test(hp) && !/@import\s+url\(/.test(hp));
   t('preview render：detectKind 判成 preview', R.detectKind(minimalPreview) === 'preview');
   t('preview render：無 kind 但有 prereg＋cases 且無 totals → detectKind=preview', R.detectKind({ prereg: {}, cases: [] }) === 'preview');
+  // preview v2（三問優先）：README 定稿句式的三問在頁首、五條人工確認上移、尾句教「說可以」；全頁無「翻車」
+  t('preview v2：三問卡在頁首（README 句式）＋五條上移＋尾句', /你要回答的三個問題/.test(hp) && /題目是否貼合你的使用與失誤情境/.test(hp) && /對照組拿到的指令有沒有洩題/.test(hp) && /可說明／無法說明的條件，你認不認同/.test(hp) && /對 AI 說「可以」/.test(hp) && /五條人工確認（①〜⑤）已上移/.test(hp));
+  t('preview v2（陰性）：頁面無「翻車」字樣（詞彙已對齊 README 定稿）', !/翻車/.test(hp));
+  const fullPrev = R.renderPreviewHtml({ kind: 'preview', name: 'fx-q', arms: [], conditions: {}, lock: { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] },
+    cases: [{ id: 'case-01-x', type: 'trap', typeLabel: '陷阱題', note: '塞了假日期', materials: [1], assertions: ['a'] }],
+    checks: [{ id: 'prompt-mentions-skill-name', ok: true, text: '題目指令裡沒有出現受測 skill 的名字。' }],
+    prereg: { exists: true, path: '/x', markdown: 'x', say: '- 只限這次條件', notSay: '- 因果通則', combined: null },
+    cost: { totalCalls: 42, minCallsIfStop: 30 }, assertions: [], trigger: null, matrix: null }, {});
+  t('preview v2：Q1 題目表（note 白話）＋Q2 引擎自檢句＋Q3 原文＋成本行 42／30', /塞了假日期/.test(fullPrev) && /沒有出現受測 skill 的名字/.test(fullPrev) && /只限這次條件/.test(fullPrev) && /因果通則/.test(fullPrev) && /42 次模型呼叫/.test(fullPrev) && /停案時最少 30 次/.test(fullPrev));
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
 // 外掛揭露（plugin disclosure，1.2.1＋R1 修正；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對

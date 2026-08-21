@@ -12,7 +12,7 @@
 ## 受測物
 
 - `skill/meeting-notes/SKILL.md`（十行）；第三組 `gauge/reminder/SKILL.md`（一句提醒）
-- 預期效果的依據：skill 自己的宣稱（規則 1–5 逐字）——不是翻車案例
+- 預期效果的依據：skill 自己的宣稱（規則 1–5 逐字）——不是失誤案例
 - 兩組拿到的東西逐字相同，唯一差別是 `.claude/skills/` 裡有沒有 skill；共用指令不含 skill 的核心指令詞（「決議／待辦／未決」三區只出現在 skill 裡）
 
 ## 題組與檢查項

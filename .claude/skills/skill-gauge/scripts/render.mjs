@@ -1798,20 +1798,43 @@ function secPreviewIntro(d) {
   return section('intro', '先看這裡', p + `<p class="chips">${chips}</p>`);
 }
 
+// 三問優先（preview v2，2026-08-21 維護者裁示）：核可那一刻要回答的三個問題（README 定稿句式）放頁首，
+// 每張卡只放回答所需的最小證據＋對應的人工確認（五條自「核可前自檢」上移）；其餘段落降為深究區。
+function secPreviewThreeQuestions(d) {
+  const cases = asArr(d.cases);
+  const checks = asArr(d.checks);
+  const checkOf = (id) => asObj(checks.find((c) => asObj(c).id === id));
+  const prereg = asObj(d.prereg);
+  const cost = asObj(d.cost);
+  const confirm = (t) => `<p><strong>☐ ${esc(t)}</strong></p>`;
+  const caseRows = cases.map((c) => { const o = asObj(c); return `<tr><td>${nz(o.note) ? esc(txt(o.note)) : `<code>${esc(txt(o.id))}</code>`}</td><td>${esc(nz(txt(o.typeLabel)) || nz(txt(o.type)) || '—')}</td><td>${String(asArr(o.materials).length)}</td></tr>`; }).join('');
+  const q1 = `<h3>問題一：題目是否貼合你的使用與失誤情境？</h3>
+${cases.length ? `<table><thead><tr><th>題目</th><th>題型</th><th>材料數</th></tr></thead><tbody>${caseRows}</tbody></table>` : '<p>（還沒有題目）</p>'}
+<p>逐字指令與材料在下面深究區的「題組」段。</p>
+${confirm('確認①：題目來自你的失誤案例或 skill 自己的宣稱，不是憑空想的')}`;
+  const leak = checkOf('prompt-mentions-skill-name');
+  const q2 = `<h3>問題二：對照組拿到的指令有沒有洩題？</h3>
+<p>兩組拿到的是逐字相同的同一份指令，唯一差別是 skill 在不在環境裡。</p>
+${nz(leak.text) ? `<p>引擎自檢：${esc(txt(leak.text))}</p>` : ''}
+${confirm('確認②：共用指令不含 skill 的核心指令詞')}
+${confirm('確認③：前置檢查兩組都做得到（不是 skill 教的格式）')}`;
+  const sayHtml = nz(prereg.combined) ? mdToHtml(txt(prereg.combined)) : [nz(prereg.say) ? `<h4>可說明</h4>${mdToHtml(txt(prereg.say))}` : '', nz(prereg.notSay) ? `<h4>無法說明</h4>${mdToHtml(txt(prereg.notSay))}` : ''].join('');
+  const q3 = `<h3>問題三：可說明／無法說明的條件，你認不認同？</h3>
+${sayHtml || '<p>（預先登錄裡找不到「可說明／無法說明」段——先補齊再核可）</p>'}
+${confirm('確認④：上面「可說明／無法說明」的範圍你同意')}`;
+  const costLine = num(cost.totalCalls) !== null ? `<p>成本：這次估計 ${esc(txt(cost.totalCalls))} 次模型呼叫${num(cost.minCallsIfStop) !== null ? `（停案時最少 ${esc(txt(cost.minCallsIfStop))} 次）` : ''}；細算在深究區「成本估算」段。</p>` : '';
+  const tail = `${costLine}${confirm('確認⑤：這個成本可以接受')}
+<p><strong>三題（加成本）都可以 → 對 AI 說「可以」，它才會鎖定並開跑；之後改了任何一項，要重出核可頁、重新核可。</strong></p>`;
+  return section('three-questions', '你要回答的三個問題', [q1, q2, q3, tail].join('\n'), '下面各段是深究區——回答這三題不需要逐字讀完，但證據都在。');
+}
+
 function secPreviewChecks(d) {
   const checks = asArr(d.checks);
   if (!checks.length) return null;
   const rows = checks.map((c) => { const o = asObj(c); return [previewCheckChip(o.ok), esc(PREVIEW_CHECK_LABEL[txt(o.id)] || txt(o.id)), esc(txt(o.text))]; });
   const inner = table(['', '項目', '說明'], rows) +
-    `<p class="note">這五條引擎判不了，請你看完題目後自己確認：</p>
-<ul class="keypoints">
-<li>①題目來自你的翻車案例或 skill 自己的宣稱</li>
-<li>②兩組共用的指令沒有洩題（不含 skill 的核心指令詞）</li>
-<li>③前置檢查兩組都做得到（不是 skill 教的格式）</li>
-<li>④可說明／無法說明你同意</li>
-<li>⑤成本可以接受</li>
-</ul>`;
-  return section('checks', '核可前自檢', inner);
+    `<p class="note">五條人工確認（①〜⑤）已上移到頁首「你要回答的三個問題」——這裡只留引擎判得了的自動檢查。</p>`;
+  return section('checks', '核可前自檢（引擎自動判的部分）', inner);
 }
 
 function secPreviewConditions(d) {
@@ -1954,6 +1977,7 @@ export function renderPreviewHtml(data, opts = {}) {
   chips.push(previewLockChip(lock));
 
   const sections = [
+    secPreviewThreeQuestions(d),
     secPreviewIntro(d),
     secPreviewChecks(d),
     secPreviewConditions(d),

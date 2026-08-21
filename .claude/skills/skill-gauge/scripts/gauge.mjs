@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.3.0';
+const ENGINE_VERSION = '1.3.1';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
@@ -1099,7 +1099,7 @@ function buildReport(cfg, outDir) {
   if (fs.existsSync(trig)) report.trigger = readJSON(trig);
   // 下一步（三岔路）：由旗標與停案判定推導，餵回建立迴圈
   const next = [];
-  if (report.baseline?.verdict === 'STOP') next.push('停案或退役：不帶 skill 的模型在這組題上每次都做得到——要嘛 skill 對這個模型沒必要，要嘛題目太鬆。先回頭改題（更貼近真實翻車、更刁），改完重新核可＋lock 再量；改題後還是全過，就把 skill 退役或不要寫。');
+  if (report.baseline?.verdict === 'STOP') next.push('停案或退役：不帶 skill 的模型在這組題上每次都做得到——要嘛 skill 對這個模型沒必要，要嘛題目太鬆。先回頭改題（更貼近真實失誤、更刁），改完重新核可＋lock 再量；改題後還是全過，就把 skill 退役或不要寫。');
   if (report.flags.some((f) => f.startsWith('零鑑別'))) next.push('改題：零鑑別的檢查項對兩組都測不出差別，把那幾條的題目換成模型會失手的情境，或直接刪掉那條檢查。');
   if (report.flags.some((f) => f.startsWith('帶 skill 反而') || f.startsWith('負效益環節'))) next.push('改 skill：帶 skill 反而較差的格子，把 report.json 裡那幾格的評分證據（runs/<題>/with/r*/grading.json 的 evidence）連同 skill 交給你建 skill 的工具（skill-forge create-skill 或官方 skill-creator）去改；改完用同一份鎖定的題目再量一次，跑 `compare` 看 held／regressed／improved。');
   if (report.flags.some((f) => f.startsWith('前置檢查沒過集中'))) next.push('看沒過前置檢查的那幾份產出：若是前置檢查含 skill 專屬格式（兩組不對等），改成兩組都做得到的檢查後重新核可＋lock；若是那一組拒答或沒交付，這就是結果，寫進限制段，不改檢查。');
@@ -1216,7 +1216,7 @@ function plainSummary(r) {
   }
   if ((r.flags || []).some((f) => f.startsWith('同格'))) out.limits.push('同一題重複跑的結果幾乎一樣，有效樣本比次數少');
   // 4. 該怎麼改（人話版）
-  const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實翻車、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看沒過前置檢查的', '先看沒過前置檢查的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
+  const NEXT = [['停案或退役', '停案或退役：不帶 skill 的模型這組題都做得到——先改題（更貼近真實失誤、更刁）；改了還是全過，這個 skill 對這個模型沒必要'], ['改題', '改題：把兩組都全過的那幾條換成模型會失手的情境，或直接刪掉那條檢查'], ['改 skill（硬化規則）', '改 skill：壓力下折了的說詞（pressure-capture.json）交給建 skill 的工具，每句合理化都該變成規則裡的一條否定'], ['改 skill（縮範圍）', '改 skill：規則被硬套到不適用的情境——修的是「什麼時候不適用」的邊界，不是把規則寫更硬'], ['改 skill', '改 skill：帶 skill 反而較差的那幾格，把評分證據連同 skill 交給建 skill 的工具去改；改完用同一份題目再量一次比較'], ['看沒過前置檢查的', '先看沒過前置檢查的那幾份產出：是前置檢查寫成了 skill 的格式（兩組不對等），還是那一組根本沒交付'], ['加題不加次', '加題不加次：同一題多跑幾次買不到新資訊，下一版把次數換成題數'], ['拒做', '拒做／沒交付：先看不帶 skill 那組是不是也這樣——是的話是模型的行為，不是 skill 的；不是的話 skill 該補一句「守住規則的同時把能做的做完」'], ['改描述', '改描述：觸發率低或誤觸發多，去改 skill 的 description（觸發只靠那段文字）'], ['保留這份報告當基準', '保留這份報告當基準：之後 skill 改版或模型更新，用同一份題目再跑一次比較有沒有退步']];
   for (const n of r.nextSteps || []) { const hit = NEXT.find(([k]) => n.startsWith(k)); out.next.push(hit ? hit[1] : n.replace(/`[^`]*`/g, '').slice(0, 120)); }
   out.next = [...new Set(out.next)].slice(0, 3);
   out.nextByKind = { question: out.next.filter((n) => /^(改題|停案或退役)/.test(n)), skill: out.next.filter((n) => /^改 skill/.test(n)), none: out.next.filter((n) => /^(不用寫|不用改)/.test(n)) };

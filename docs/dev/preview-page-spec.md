@@ -1,5 +1,7 @@
 # Spec: `preview` — the approval page (v1.1.1)
 
+> ⟦superseded 2026-08-21⟧ Layout and wording updated by preview v2 (three-questions-first; see maintainer's private `gauge/preview-v2-dev/spec.md`). This file stays as the v1.1.1 historical record; 翻車-era wording herein is pre-README-finalization.
+
 Status: implementation spec for the `feat/preview-page` branch. Human-facing docs stay in Traditional Chinese; this file is the execution plan (English on purpose: it is read by the implementing agent, not by end users).
 
 ## Why

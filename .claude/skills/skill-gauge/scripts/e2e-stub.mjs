@@ -42,6 +42,7 @@ r = run(['lock', '--config', CFG, '--relock']); t('--relock 成功且留下舊�
   r = run(['preview', '--config', CFG, '--out', outLocked]);
   const htmlLocked = fs.existsSync(outLocked) ? fs.readFileSync(outLocked, 'utf8') : '';
   t('preview（已鎖定）exit 0，提到已鎖定', r.code === 0 && /已鎖定/.test(htmlLocked), r.out.slice(-300));
+  t('preview v2：三問卡在頁首、教具頁無「翻車」', /你要回答的三個問題/.test(htmlLocked) && /題目是否貼合你的使用與失誤情境/.test(htmlLocked) && !/翻車/.test(htmlLocked));
   const promptPath = path.join(fx, 'gauge', 'case-01-trap.prompt.md');
   const savedPrompt = fs.readFileSync(promptPath, 'utf8');
   fs.writeFileSync(promptPath, savedPrompt + '\n\n（e2e 測試改動）');
@@ -76,7 +77,7 @@ t('決策摘要 v2：三路線建議段（改 skill／改用法／發掘）各�
 t('決策摘要 v2：成本行印出決策矩陣門檻字樣；邊界行帶單 skill 隔離句', /門檻：每次全對的成本差 ≥20% 視為顯著（經驗值，未校準）/.test((rep?.decisionFirst || []).find((l) => l.startsWith('【成本】')) || '') && /單 skill 隔離/.test((rep?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
 t('環節效益表：report.json／report.md／report.html 三處都有', !!rep?.benefit?.rows?.length && fs.readFileSync(path.join(outAll, 'report.md'), 'utf8').includes('## 環節效益表') && fs.readFileSync(path.join(outAll, 'report.html'), 'utf8').includes('環節效益表'));
 t('深究成本表：Markdown 與 HTML 都有同一組分子分母（場景全對／有效但未成功／無法判定／前置作廢）', (() => { const md = fs.readFileSync(path.join(outAll, 'report.md'), 'utf8'); const h = fs.readFileSync(path.join(outAll, 'report.html'), 'utf8'); return /### 深究：成本派生欄/.test(md) && /場景全對（AI 評分）/.test(md) && /有效但未成功/.test(md) && /深究：成本派生欄/.test(h) && /場景全對（AI 評分）/.test(h); })());
-t('公開字串沒有殘留舊詞彙（判定通過／每成功成本／無成功 run／機械層全過）', (() => { const md = fs.readFileSync(path.join(outAll, 'report.md'), 'utf8'); const h = fs.readFileSync(path.join(outAll, 'report.html'), 'utf8'); return !/判定通過|每成功成本|無成功 run|機械層全過/.test(md + h); })());
+t('公開字串沒有殘留舊詞彙（判定通過／每成功成本／無成功 run／機械層全過／翻車）', (() => { const md = fs.readFileSync(path.join(outAll, 'report.md'), 'utf8'); const h = fs.readFileSync(path.join(outAll, 'report.html'), 'utf8'); const pg = fs.readFileSync(path.join(outAll, 'page.html'), 'utf8'); return !/判定通過|每成功成本|無成功 run|機械層全過|翻車/.test(md + h + pg); })());
 t('history.jsonl 有一列', fs.existsSync(path.join(fx, 'gauge', 'history.jsonl')) && fs.readFileSync(path.join(fx, 'gauge', 'history.jsonl'), 'utf8').trim().split('\n').length === 1);
 // 3. 已跑過的不重跑：再跑一次 report 只重算；history 同目錄不重複追加
 r = run(['report', '--config', CFG, '--out', outAll]); t('report 重算成功', r.code === 0);
