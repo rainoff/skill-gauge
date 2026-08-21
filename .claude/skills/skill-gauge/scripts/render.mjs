@@ -1351,7 +1351,7 @@ export function renderPersonPageHtml(report, opts = {}) {
     const full = asObj(sr.full), inf = isObj(sr.informative) ? sr.informative : null;
     const sameN = num(sr.sameRateCases);
     lines.push(`<p><strong>正式讀數（全部情境）：帶 ${esc(cellTxt(full.with))} vs 不帶 ${esc(cellTxt(full.without))}</strong>${sameN ? `（其中 ${esc(txt(sameN))} 個情境兩組同率——貢獻分母、不貢獻差異訊號）` : ''}</p>`);
-    if (inf) lines.push(`<p>診斷視角（事後子集）：只看本次結果兩組率不同的 ${esc(txt(inf.count ?? asArr(inf.caseLabels).length))} 個情境——帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}。<em>這個子集是看完結果才挑的，會放大表面差距；只用來指路（哪些情境值得先看），不可當推論或比較的證據——正式判定用上面的全分母。</em></p>`);
+    if (inf) lines.push(`<p>診斷視角（事後子集）：只看本次結果兩組率不同的 ${esc(txt(num(inf.count) !== null ? inf.count : '？'))} 個情境——帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}。<em>這個子集是看完結果才挑的，會放大表面差距；只用來指路（哪些情境值得先看），不可當推論或比較的證據——正式判定用上面的全分母。</em></p>`);
     for (const os of asArr(sr.oneSided)) if (isObj(os)) lines.push(`<p>「${esc(txt(os.label))}」只有 ${esc(txt(os.side))} 這一側的資料——資料不完整，不入比較。</p>`);
     for (const c of asArr(sr.corrections)) {
       if (!isObj(c) || !isObj(c.range)) continue;

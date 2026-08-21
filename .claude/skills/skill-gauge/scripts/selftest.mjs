@@ -1306,6 +1306,9 @@ try {
     { id: 'case-01-trap', type: 'trap', note: '這題會踩 fact-aaa', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 0, validRuns: 3, scenario: { success: 1, notFirstPass: 2 } } } },
   ], flags: [], benefit: null });
   t('personPage（R2）：note 藏 assertion id → 標籤消毒成 label', (() => { const m = buildPersonPage(noteRep).map[0]; return m.label === '這題會踩 日期不能捏造' && !m.label.includes('fact-aaa'); })());
+  // R3 regression 修復：label 含 $&／$' 等 replacement 序列＝純文字，id 不漏回、不吃前後文
+  const dollarRep = mkRep({ assertions: { 'fact-x': { family: 'fact', label: '$&' }, 'fact-y': { family: 'fact', label: "價格 $' 上漲" } }, decisionFirst: ['【結論】x', '【邊界】提到 fact-x 與 fact-y。', '【建議·改 skill】z'], flags: [], benefit: null });
+  t('personPage（R3）：label 含 $&／$\' → 當純文字替換，id 不原樣漏回', (() => { const b = buildPersonPage(dollarRep).boundary.line; return !/fact-x|fact-y/.test(b) && b.includes('$&') && b.includes("價格 $' 上漲"); })());
   // R2：BigInt 交叉相乘——2^53 摺疊下率差 1 兆分之一也判得出（浮點會誤判同率）
   const bigRep = mkRep({ cases: [
     { id: 'case-01-big', type: 'trap', note: 'BIG', arms: { with: { invalidRuns: 0, validRuns: 1, scenario: { success: 100000000, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 1, scenario: { success: 99999999, notFirstPass: 1 } } } },

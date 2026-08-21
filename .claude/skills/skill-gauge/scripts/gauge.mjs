@@ -1645,7 +1645,7 @@ function buildPersonPage(r) {
   const GUARD = 'A-Za-z0-9_-';
   const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const tokenRe = (id) => new RegExp(`(?<![${GUARD}])${escRe(id)}(?![${GUARD}])`, 'g');
-  const mkSanitizer = (pairs) => { const compiled = pairs.filter(([id]) => id).sort((x, y) => y[0].length - x[0].length).map(([id, rep]) => [tokenRe(id), rep]); return (text) => { let t = String(text ?? ''); for (const [re, rep] of compiled) t = t.replace(re, rep); return t; }; };
+  const mkSanitizer = (pairs) => { const compiled = pairs.filter(([id]) => id).sort((x, y) => y[0].length - x[0].length).map(([id, rep]) => [tokenRe(id), String(rep)]); return (text) => { let t = String(text ?? ''); for (const [re, rep] of compiled) t = t.replace(re, () => rep); return t; }; }; // 函式 replacement：label／note 含 $&、$' 等序列時當純文字，不展開（R3 regression 修復）
   const cIds = caseList.map((c) => c.id);
   const labelFor = (id) => {
     const a = r.assertions?.[id]; if (!a) return id;
@@ -1905,7 +1905,8 @@ function lastTwoComparable(entries) {
 // ---------- 報告輸出：report.json + report.md + report.html（render.mjs）＋ history ----------
 async function loadRender() { try { return await import('./render.mjs'); } catch (e) { log('⚠ 找不到或載入不了 render.mjs，略過 HTML：' + (e?.message || e)); return null; } }
 async function writeHtml(outDir, data, kind) {
-  const R = await loadRender(); if (!R) return null;
+  const R = await loadRender();
+  if (!R) { if (kind === 'report') throw new Error('render.mjs 載入失敗——report.html 與 page.html 是報告的必要產物，不能靜默略過'); return null; }
   const fn = kind === 'report' ? R.renderReportHtml : kind === 'matrix' ? R.renderMatrixHtml : R.renderDescribeHtml;
   if (typeof fn !== 'function') return null;
   const p = path.join(outDir, `${kind}.html`);
