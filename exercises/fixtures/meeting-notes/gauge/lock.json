@@ -1,5 +1,5 @@
 {
-  "lockedAt": "2026-08-21T10:04:45.965Z",
+  "lockedAt": "2026-08-21T10:22:00.214Z",
   "entries": [
     {
       "label": "gauge.json",
@@ -7,7 +7,7 @@
     },
     {
       "label": "pre-registration.md",
-      "sha256": "2b67323f943ce832d6f92ae2dff50d94722ca015dbfbfa3ca72719485089db80"
+      "sha256": "d03d83eeae0dc27dad43f70b6abccd2acb64464963e65d628e3acf3a203acbfb"
     },
     {
       "label": "skill/SKILL.md",
@@ -58,6 +58,6 @@
       "sha256": "d730f7b95eabae8c7b77d5effa84afeae0bd50b34b5c4ba5ddba5b5d33b614b9"
     }
   ],
-  "relocks": 2,
+  "relocks": 4,
   "engine": "1.3.1"
 }

@@ -126,7 +126,14 @@ t('停案：屬量測層問題→建議段出「改題目」，三路線退誠�
   const re = run(['all', '--config', CFG, '--out', outEff, '--runs', '1', '--effort', 'low', '--judge-model', 'stub-judge']);
   const repE = fs.existsSync(path.join(outEff, 'report.json')) ? readJ(path.join(outEff, 'report.json')) : null;
   t('覆寫執法：--effort 與 --judge-model 偏離核可 → 各得一支「與核可不同」旗標', re.code === 0 && !!repE && repE.flags.some((f) => /effort與核可不同/.test(f) && /--effort 覆寫/.test(f)) && repE.flags.some((f) => /評分模型與核可不同/.test(f) && /--judge-model 覆寫/.test(f)), JSON.stringify(repE?.flags?.filter((f) => /核可不同/.test(f))));
-  t('覆寫執法（陰性）：主跑（無覆寫）沒有「與核可不同」旗標（--runs 1 除外）', !(rep?.flags || []).some((f) => /effort與核可不同|評分模型與核可不同|執行模型與核可不同/.test(f)));
+  t('覆寫執法：CLI 執行當下印 ⚠ 警告（effort＋judge-model 各一行）——契約句「執行當下會印警告」的護欄', /⚠ --effort low 跟核可的/.test(re.out) && /⚠ --judge-model stub-judge 跟核可的/.test(re.out), re.out.slice(0, 400));
+  t('覆寫執法：page.html 結論卡帶「試跑口徑」警語（3 項與核可不同）', fs.existsSync(path.join(outEff, 'page.html')) && /試跑口徑：3 項執行條件與核可不同/.test(fs.readFileSync(path.join(outEff, 'page.html'), 'utf8')));
+  t('覆寫執法（陰性）：主跑（無 effort／模型覆寫）沒有那兩支旗標', !!rep && !(rep.flags || []).some((f) => /effort與核可不同|評分模型與核可不同|執行模型與核可不同/.test(f)));
+  const outMx = path.join(work, 'out-mx-temp');
+  const rm2 = run(['matrix', '--config', CFG, '--out', outMx, '--models', 'stub-x', '--efforts', 'low', '--runs', '1']);
+  const cellDirs = fs.existsSync(outMx) ? fs.readdirSync(outMx, { withFileTypes: true }).filter((e) => e.isDirectory()) : [];
+  const cellRep = cellDirs.length ? readJ(path.join(outMx, cellDirs[0].name, 'report.json')) : null;
+  t('覆寫執法（critic 三輪 🔴）：--models 臨時格＝逐格「矩陣格與核可不同」旗標＋CLI 警告', rm2.code === 0 && /⚠ --models／--efforts 是臨時格/.test(rm2.out) && !!cellRep && cellRep.flags.some((f) => /矩陣格與核可不同/.test(f) && /stub-x/.test(f)), JSON.stringify(cellRep?.flags?.filter((f) => /矩陣格/.test(f))) + rm2.out.slice(-200));
 }
 // 8. baseline 模式（gauge.json 去掉 skill）
 const g = readJ(CFG); delete g.skill; fs.writeFileSync(CFG, JSON.stringify(g, null, 2));

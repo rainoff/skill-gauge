@@ -1142,7 +1142,7 @@ try {
   t('preview v2（critic 🟡6）：成本估不出來 → ⚠ 阻擋、無 ☐ 確認⑤、尾句改口', /成本估不出來/.test(noCost) && !/☐ 確認⑤/.test(noCost) && !/適用的確認都成立/.test(noCost));
   const noCases = R.renderPreviewHtml(mkPrev({ cases: [] }), {});
   t('preview v2（critic 建議 3）：無題目＝⚠ 阻擋——尾句改口、不給「說可以」通路、不出指路句', /還沒有題目——先出題、重出核可頁/.test(noCases) && !/適用的確認都成立/.test(noCases) && !/深究區的「題組」段/.test(noCases));
-  t('preview v2（critic 建議 4）：baseline-only 尾句雜湊清單不含 skill；一般配置含 skill', /預先登錄、gauge.json、題目、材料 的檔案雜湊/.test(baseOnly) && !/材料、skill 的檔案雜湊/.test(baseOnly) && /材料、skill 的檔案雜湊/.test(fullPrev));
+  t('preview v2（critic 建議 4）：baseline-only 尾句雜湊清單不含 skill；一般配置含 skill（中英間距對）', /預先登錄、gauge.json、題目、材料的檔案雜湊/.test(baseOnly) && !/skill 的檔案雜湊/.test(baseOnly) && /材料、skill 的檔案雜湊/.test(fullPrev));
   t('preview v2（critic 新 🔴）：尾句契約句與執法一致——點名 --runs／--effort／--judge-model、明說執行模型不吃覆寫', /--runs/.test(fullPrev) && /--effort/.test(fullPrev) && /--judge-model/.test(fullPrev) && /執行模型在 run／all 不吃覆寫/.test(fullPrev));
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
@@ -1321,6 +1321,9 @@ try {
   t('personPage：map 標籤——note 人話、無 note＝「情境 N（題型）」，不回退 id', pp.map[0].label === '塞了假日期的會議紀錄' && pp.map[1].label === '情境 2（乾淨對照題）' && !JSON.stringify(pp.map).includes('case-0'));
   t('personPage（MF-8）：結論自組——不引用環節效益表、帶個位數警語', /可留用——場景全對：帶 5\/6 vs 不帶 3\/6/.test(pp.conclusion.line) && /翻一兩次就會變/.test(pp.conclusion.line) && !/環節效益表/.test(pp.conclusion.line));
   t('personPage（陰性）：無 decisionFirstData 回 null', buildPersonPage({ name: 'old', arms: ['with', 'without'], cases: [] }) === null);
+  // critic 三輪：覆寫旗標存在 → page 結論卡「試跑口徑」警語（陽性）；無旗標不出（陰性）
+  const ovr = buildPersonPage(mkRep({ flags: ['次數與核可不同：x', '評分模型與核可不同：y'] }));
+  t('personPage（critic 三輪）：與核可不同旗標 → conclusion.overrides.count=2；無旗標為 null', ovr.conclusion.overrides?.count === 2 && buildPersonPage(mkRep({ flags: [] })).conclusion.overrides === null);
   // R2：邊界感知替換——短 id 不絞英文散文；獨立出現才換
   const shortRep = mkRep({ assertions: { or: { family: 'orientation', label: null } }, decisionFirst: ['【結論】x', '【邊界】normal workflow 裡的 or 要看位置。', '【建議·改 skill】看 or'], flags: [], benefit: null });
   const ppShort = buildPersonPage(shortRep);
@@ -1348,6 +1351,8 @@ try {
     const rep = mkRep(); rep.personPage = pp;
     const html = R2.renderPersonPageHtml(rep);
     t('page render：五段＋正式讀數＋事後子集揭露＋反事實界線＋誰能動手＋算式＋樣本量句', ['結論', '情境地圖', '發現', '邊界', '下一步'].every((k) => html.includes(k)) && /正式讀數/.test(html) && /看完結果才挑的/.test(html) && /不是偏誤校正/.test(html) && /誰能動手/.test(html) && /＝總花費/.test(html) && /這 12 次裡沒有/.test(html));
+    const repOvr = mkRep({ flags: ['次數與核可不同：x'] }); repOvr.personPage = buildPersonPage(repOvr);
+    t('page render（critic 三輪）：覆寫旗標→結論卡頂出「試跑口徑」警語；無旗標的頁沒有', /試跑口徑：1 項執行條件與核可不同/.test(R2.renderPersonPageHtml(repOvr)) && !/試跑口徑/.test(html));
     t('page render（禁詞）：無 id、無相似度、無外部資源', !/fact-aaa|judgment-bbb|case-0|orient|相似度/.test(html) && !/(src|href)=["']https?:\/\//.test(html));
     const repStop = mkRep(); repStop.personPage = ppStop;
     t('page render（MF-1）：STOP 頁無「正式讀數」、印停案理由', (() => { const h = R2.renderPersonPageHtml(repStop); return !/正式讀數/.test(h) && /停案/.test(h); })());

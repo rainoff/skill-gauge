@@ -1128,6 +1128,12 @@ function buildReport(cfg, outDir) {
       const cmp = (key, label, how) => { const a = approvedCfg[key] ?? null, e = effR[key] ?? null; if (e !== null && a !== e) report.flags.push(`${label}與核可不同：gauge.json 寫 ${a ?? '（未填）'}、實際執行 ${e}（${how} 覆寫）——試跑口徑，不當正式結論`); };
       cmp('judgeModel', '評分模型', '--judge-model');
       if (!cfg.__matrixCell) { cmp('executorEffort', 'effort', '--effort'); cmp('executorModel', '執行模型', '設定層'); }
+      else {
+        // critic 三輪：豁免只給核可 gauge.json 的 matrix[] 真的有的格——--models／--efforts 臨時注入的格
+        // 會整組取代核可網格（matrixCombos），先前一律豁免＝核可頁保證句在該路徑失實（roadmap:118 舊記缺口）
+        const cellApproved = Array.isArray(approvedCfg.matrix) && approvedCfg.matrix.some((m) => ((m?.executorModel ?? null) === (effR.executorModel ?? null)) && ((m?.effort ?? null) === (effR.executorEffort ?? null)));
+        if (!cellApproved) report.flags.push(`矩陣格與核可不同：${effR.executorModel ?? '（基準模型）'} × effort ${effR.executorEffort ?? '（未填）'} 不在核可的 matrix 網格裡（--models／--efforts 臨時格）——試跑口徑，不當正式結論`);
+      }
     } }
   report.conditions = { executorModel: cfg.executorModel || '(帳號預設)', executorEffort: cfg.executorEffort || null, judgeModel: cfg.judgeModel || null, isolation: [...ISOLATION_FLAGS, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', '沙箱不在家目錄底下', process.env.GAUGE_ENV_PASSTHROUGH === '1' ? '⚠ 環境變數整份放行（GAUGE_ENV_PASSTHROUGH=1）' : '環境變數白名單'], platform: `${process.platform} ${os.release()}`, node: process.version, claudeVersion: report.isolation?.claudeVersion || null };
   if (cfg.__matrixCell) report.matrixCell = cfg.__matrixCell;
@@ -1751,8 +1757,10 @@ function buildPersonPage(r) {
     return { tag: hit ? hit[0].slice('【建議·'.length, -1) : null, actor: hit ? hit[1] : null, text: sanitize(hit ? l.slice(hit[0].length) : l) };
   });
   const tg = r.trigger || null;
+  const overrideFlags = (r.flags || []).filter((f) => typeof f === 'string' && /與核可不同/.test(f));
   return {
     conclusion: { label: df.verdict.label || null, kind: df.verdict.kind || null, line: conclusionLine,
+      overrides: overrideFlags.length ? { count: overrideFlags.length } : null,
       scope: '這一頁回答的是「它宣稱會做的做到了嗎」「哪些情境行、哪些不行」；值不值得留在工作流裡，要拿這一頁對照你的成本與替代方案自己裁——這一頁不代答。' },
     successRate, map, findings,
     boundary: { line: sanitize(pick('【邊界】')) },
@@ -2002,6 +2010,7 @@ const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').re
 function matrixCombos(cfg, args) {
   let combos = Array.isArray(cfg.matrix) ? cfg.matrix.map((m) => ({ executorModel: m.executorModel || m.model || cfg.executorModel || null, effort: m.effort || null })) : [];
   if (args.models || args.efforts) {
+    log('⚠ --models／--efforts 是臨時格，會取代核可頁上的 matrix 網格：試跑口徑，報告每格會標記，不當正式結論');
     const models = args.models ? String(args.models).split(',').map((x) => x.trim()).filter(Boolean) : [cfg.executorModel || null];
     const efforts = args.efforts ? String(args.efforts).split(',').map((x) => x.trim()).filter(Boolean) : [null];
     combos = []; for (const m of models) for (const e of efforts) combos.push({ executorModel: m, effort: e });
