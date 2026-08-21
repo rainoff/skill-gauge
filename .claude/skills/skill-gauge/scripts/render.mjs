@@ -1319,63 +1319,61 @@ ${pressureHtml}
 // renderMatrixHtml — 多個「模型 × effort」組合
 // ============================================================
 // ---------- 給人看的一頁（v1.3）：renderPersonPageHtml ----------
-// 只排版 report.personPage（結構化資料，gauge.mjs 算好）；五段：結論／情境地圖／發現／邊界／下一步。
-// 規則在資料層已保證：無 assertion id、無格數、無相似度；這裡再守四條排版紀律——
-// 頭條與但書同一張卡、派生數字帶算式、絕對詞帶樣本量、建議標誰能動手。
+// 純格式化：所有數字（含百分比、差額、同率題數、觸發缺口）都由 gauge.mjs 的 personPage 預算好，
+// 這裡不做任何算術，只 esc＋排版（v1.3-R1 MF-7）。缺必要欄位＝誠實缺頁句（S-11），不硬湊。
 export function renderPersonPageHtml(report, opts = {}) {
   const r = asObj(report);
   const name = nz(txt(r.name)) || '（未命名）';
   const title = txt(opts.title || `${name} — 給人看的一頁`);
-  const foot = `<p>這一頁由量測引擎直接從 report.json 產生——不是 AI 現場寫的。工程完整版（每一份產出、評分證據、逐條檢查）在同資料夾的 report.html。</p><p>頁面上的每個數字都只描述這一次的條件；換模型、換題目，數字就不是這樣。</p>`;
+  const foot = `<p>這一頁由量測引擎直接從 report.json 產生——不是 AI 現場寫的。工程完整版（每一份產出、評分證據、逐條檢查）在同資料夾的 report.html；拿不到那份檔案的話，向給你這一頁的人要。</p><p>頁面上的每個數字都只描述這一次的條件；換模型、換題目，數字就不是這樣。</p>`;
   const pp = r.personPage;
-  if (!isObj(pp)) {
-    return page({ title, h1: title, chipsHtml: '', sections: [section('missing', '這一頁出不來', `<p>這份 report.json 是舊版引擎產的，沒有「給人看的一頁」需要的結構化資料。工程版照常可看（report.html）；要出這一頁，用現行引擎重新量測或重算報告。</p>`, null)], footerHtml: foot });
+  const usable = isObj(pp) && isObj(pp.conclusion) && isObj(pp.successRate) && isObj(pp.boundary);
+  if (!usable) {
+    return page({ title, h1: title, chipsHtml: '', sections: [section('missing', '這一頁出不來', `<p>這份 report.json 沒有「給人看的一頁」需要的完整結構化資料（1.3.0 以前的引擎產的，或欄位缺損）。工程版照常可看（report.html）；要出這一頁，用現行引擎重新量測或重算報告。</p>`, null)], footerHtml: foot });
   }
-  const pct = (n, d) => (num(n) !== null && num(d) ? Math.round((n / d) * 100) : null);
-  const cellTxt = (x) => (isObj(x) && num(x.d) ? `${x.n}/${x.d}（${pct(x.n, x.d)}%）` : '—');
+  const cellTxt = (c) => (isObj(c) && num(c.d) ? `${txt(c.n)}/${txt(c.d)}${num(c.pct) !== null ? `（${txt(c.pct)}%）` : ''}` : '—');
   const concl = asObj(pp.conclusion);
-  const sr = asObj(pp.successRate), full = asObj(sr.full), inf = isObj(sr.informative) ? sr.informative : null;
-  const mapRows = asArr(pp.map);
-  const bothD = mapRows.filter((x) => num(x.with?.d) && num(x.without?.d)).length;
-  const sameCnt = inf ? bothD - asArr(inf.caseIds).length : bothD;
-  // 結論卡：判定＋結論句＋主讀數＋全分母＋修正值＋界線句——同一張卡，截走頭條就一定帶著但書
+  const sr = asObj(pp.successRate);
   const lines = [];
   if (nz(concl.label)) lines.push(`<p class="big"><strong>${esc(txt(concl.label))}</strong></p>`);
   if (nz(concl.line)) lines.push(`<p>${esc(txt(concl.line))}</p>`);
-  if (inf) lines.push(`<p><strong>主讀數（只算測得出差別的 ${asArr(inf.caseIds).length} 個情境）：帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}</strong></p>`);
-  if (isObj(full.with) && num(full.with.d)) lines.push(`<p>全部情境：帶 ${esc(cellTxt(full.with))} vs 不帶 ${esc(cellTxt(full.without))}${sameCnt > 0 ? `——其中 ${sameCnt} 個情境兩組同分：分母有它們、差異訊號沒有，所以主讀數在上面那行` : ''}</p>`);
-  for (const c of asArr(sr.corrections)) {
-    if (!isObj(c) || !isObj(c.range)) continue;
-    lines.push(`<p>已知偏誤的修正值：沒過前置檢查的次數不對稱（帶 ${esc(txt(c.counts?.with ?? 0))} 次、不帶 ${esc(txt(c.counts?.without ?? 0))} 次）。把這些次數全當「其實會成功」的最壞情況下，差距落在 <strong>${esc(txt(c.range.min))}〜${esc(txt(c.range.max))} 次</strong>（原始差距 ${esc(txt(c.gap))} 次）。</p>`);
-  }
-  const nums = asObj(pp.numbers);
-  if (isObj(nums.with) || isObj(nums.without)) {
-    const dg = usdDigits([nums.with?.perSuccessCostUsd?.value, nums.without?.perSuccessCostUsd?.value]);
-    const one = (k, label) => { const m = nums[k]?.perSuccessCostUsd; return isObj(m) ? `${label} ${fmtUsd(m.value, dg)}（＝總花費 ${fmtUsd(m.numerator, dg)} ÷ 全對 ${esc(txt(m.denominator))} 次）` : null; };
-    const parts = [one('with', '帶'), one('without', '不帶')].filter(Boolean);
-    if (parts.length) lines.push(`<p>每次全對的花費：${parts.join('；')}。</p>`);
+  if (sr.available === false) {
+    lines.push(`<p><strong>${esc(txt(sr.reason))}</strong></p>`);
+  } else {
+    const full = asObj(sr.full), inf = isObj(sr.informative) ? sr.informative : null;
+    const sameN = num(sr.sameRateCases);
+    lines.push(`<p><strong>正式讀數（全部情境）：帶 ${esc(cellTxt(full.with))} vs 不帶 ${esc(cellTxt(full.without))}</strong>${sameN ? `（其中 ${esc(txt(sameN))} 個情境兩組同率——貢獻分母、不貢獻差異訊號）` : ''}</p>`);
+    if (inf) lines.push(`<p>診斷視角（事後子集）：只看本次結果兩組率不同的 ${esc(txt(asArr(inf.caseLabels).length))} 個情境——帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}。<em>這個子集是看完結果才挑的，會放大表面差距；只用來指路（哪些情境值得先看），不可當推論或比較的證據——正式判定用上面的全分母。</em></p>`);
+    for (const os of asArr(sr.oneSided)) if (isObj(os)) lines.push(`<p>「${esc(txt(os.label))}」只有 ${esc(txt(os.side))} 這一側的資料——資料不完整，不入比較。</p>`);
+    for (const c of asArr(sr.corrections)) {
+      if (!isObj(c) || !isObj(c.range)) continue;
+      lines.push(`<p>反事實界線：如果沒過前置檢查的那些次（帶 ${esc(txt(c.counts?.with ?? 0))} 次、不帶 ${esc(txt(c.counts?.without ?? 0))} 次）其實會成功——差距＝原始 ${esc(txt(c.gap))} 次＋x−y（x≤${esc(txt(c.counts?.with ?? 0))}、y≤${esc(txt(c.counts?.without ?? 0))}），落在 <strong>${esc(txt(c.range.min))}〜${esc(txt(c.range.max))} 次</strong>。<em>這是單一反事實的界線，不是偏誤校正、也不是信賴區間；它沒處理的還有：樣本小、單輪模擬、兩組非同時段執行。</em></p>`);
+    }
+    const nums = asObj(pp.numbers);
+    if (isObj(nums.with) || isObj(nums.without)) {
+      const dg = usdDigits([nums.with?.perSuccessCostUsd?.value, nums.without?.perSuccessCostUsd?.value]);
+      const one = (k, label) => { const m = nums[k]?.perSuccessCostUsd; return isObj(m) ? `${label} ${fmtUsd(m.value, dg)}（＝總花費 ${fmtUsd(m.numerator, dg)} ÷ 全對 ${esc(txt(m.denominator))} 次）` : null; };
+      const parts = [one('with', '帶'), one('without', '不帶')].filter(Boolean);
+      if (parts.length) lines.push(`<p>每次全對的花費：${parts.join('；')}。</p>`);
+    }
   }
   if (nz(concl.scope)) lines.push(`<p><em>${esc(txt(concl.scope))}</em></p>`);
-  const secConclusion = section('pp-conclusion', '結論', lines.join('\n'), '頭條、它的但書與修正值在同一張卡上——只轉傳這一段也不會丟掉界線。');
-  // 情境地圖
-  const secMap = mapRows.length ? section('pp-map', '情境地圖', `<table><thead><tr><th>情境</th><th>帶</th><th>不帶</th><th></th></tr></thead><tbody>${mapRows.map((x) => `<tr><td>${esc(txt(x.label || x.id))}</td><td>${esc(cellTxt(x.with))}</td><td>${esc(cellTxt(x.without))}</td><td>${x.thin ? '每格 ≤3 次——翻 1 次就變樣，當線索不當定論' : ''}</td></tr>`).join('')}</tbody></table>`, '全對＝那一題的每條預期檢查都做對才算一次。') : null;
-  // 發現
-  const fnd = asArr(pp.findings);
+  const secConclusion = section('pp-conclusion', '結論', lines.join('\n'), '頭條、它的但書與界線在同一張卡上——只轉傳這一段也不會丟掉限制。');
+  const mapRows = asArr(pp.map).filter(isObj);
+  const secMap = mapRows.length ? section('pp-map', '情境地圖', `<table><thead><tr><th>情境</th><th>帶</th><th>不帶</th><th></th></tr></thead><tbody>${mapRows.map((x) => `<tr><td>${esc(txt(x.label))}</td><td>${esc(cellTxt(x.with))}</td><td>${esc(cellTxt(x.without))}</td><td>${x.thin ? '每格 ≤3 次——翻 1 次就變樣，當線索不當定論' : ''}</td></tr>`).join('')}</tbody></table>`, '全對＝那一題的每條預期檢查都做對才算一次。') : null;
+  const fnd = asArr(pp.findings).filter(isObj);
   const secFindings = fnd.length ? section('pp-findings', '發現', `<ul class="keypoints">${fnd.map((f) => {
-    if (!isObj(f)) return '';
     if (f.attribution === 'undetermined') return `<li>${esc(txt(f.text))}<br><strong>歸因未定案</strong>——兩種可能：${asArr(f.alternatives).map((a) => esc(txt(a))).join('；')}。<br>怎麼分開：${esc(txt(f.separationHint))}</li>`;
     return `<li>${esc(txt(f.text))}</li>`;
   }).join('')}</ul>`, null) : null;
-  // 邊界（含觸發樣本句：絕對詞帶樣本量）
   const bLines = [];
   if (nz(asObj(pp.boundary).line)) bLines.push(`<p>${esc(txt(pp.boundary.line))}</p>`);
   const tg = isObj(pp.trigger) ? pp.trigger : null;
-  if (tg && num(tg.should?.n)) bLines.push(`<p>觸發：該觸發的 ${esc(txt(tg.should.n))} 次裡觸發了 ${esc(txt(tg.should.fired))} 次${num(tg.should.fired) !== null && tg.should.fired < tg.should.n ? `、${tg.should.n - tg.should.fired} 次沒觸發` : ''}。</p>`);
-  if (tg && num(tg.shouldNot?.n)) bLines.push(`<p>誤觸發：不該觸發的 ${esc(txt(tg.shouldNot.n))} 次裡${tg.shouldNot.fired === 0 ? `沒有誤觸發——是「這 ${esc(txt(tg.shouldNot.n))} 次裡沒有」，樣本就這麼多，不是保證` : `誤觸發了 ${esc(txt(tg.shouldNot.fired))} 次`}。</p>`);
+  if (tg && num(tg.should?.n) !== null) bLines.push(`<p>觸發：該觸發的 ${esc(txt(tg.should.n))} 次裡觸發了 ${esc(txt(tg.should.fired))} 次${num(tg.should.missed) ? `、${esc(txt(tg.should.missed))} 次沒觸發` : ''}。</p>`);
+  if (tg && num(tg.shouldNot?.n) !== null) bLines.push(`<p>誤觸發：不該觸發的 ${esc(txt(tg.shouldNot.n))} 次裡${tg.shouldNot.fired === 0 ? `沒有誤觸發——是「這 ${esc(txt(tg.shouldNot.n))} 次裡沒有」，樣本就這麼多，不是保證` : `誤觸發了 ${esc(txt(tg.shouldNot.fired))} 次`}。</p>`);
   const secBoundary = bLines.length ? section('pp-boundary', '邊界', bLines.join('\n'), null) : null;
-  // 下一步（誰能動手）
-  const nx = asArr(pp.next);
-  const secNext = nx.length ? section('pp-next', '下一步', `<ul class="keypoints">${nx.map((x) => isObj(x) ? `<li><strong>［${esc(txt(x.tag || '建議'))}｜誰能動手：${esc(txt(x.actor || '——'))}］</strong> ${esc(txt(x.text))}</li>` : '').join('')}</ul>`, '每一條都標了誰能動手——拿到這頁的人不必自己猜要找誰。') : null;
+  const nx = asArr(pp.next).filter(isObj);
+  const secNext = nx.length ? section('pp-next', '下一步', `<ul class="keypoints">${nx.map((x) => `<li><strong>［${esc(txt(x.tag || '建議'))}｜誰能動手：${esc(txt(x.actor || '——'))}］</strong> ${esc(txt(x.text))}</li>`).join('')}</ul>`, '每一條都標了誰能動手——拿到這頁的人不必自己猜要找誰。') : null;
   const chips = [];
   if (nz(r.generatedAt)) chips.push(chip(`產生時間 ${txt(r.generatedAt)}`));
   if (nz(asObj(r.conditions).executorModel)) chips.push(chip(`執行模型 ${txt(r.conditions.executorModel)}`));

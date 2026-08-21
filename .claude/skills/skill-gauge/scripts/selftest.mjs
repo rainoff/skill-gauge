@@ -1251,34 +1251,61 @@ try {
   fs.rmSync(pd, { recursive: true, force: true });
 }
 
-// v1.3 給人看的一頁：buildPersonPage 已知答案＋renderer 紀律（陽性陰性；spec: gauge/v13-page-dev/spec.md）
+// v1.3 給人看的一頁（R1 修正版 API）：buildPersonPage 已知答案＋renderer 紀律（陽性陰性；spec: gauge/v13-page-dev/spec.md）
 {
-  const mkRep = () => ({
+  const mkRep = (over = {}) => ({
     name: 'pp-fx', arms: ['with', 'without'],
     decisionFirstData: { verdict: { kind: 'keep', label: '可留用' } },
-    decisionFirst: ['【結論】pp-fx：可留用——demo', '【邊界】這次測量可說明 X；無法說明 Y。', '【建議·改 skill】卡住的預期檢查：fact-aaa（帶 2/3、不帶 1/3）', '【建議·改用法】先用在高全對情境', '【建議·發掘】延伸'],
-    assertions: { 'fact-aaa': { family: 'fact', text: 'T', label: '日期不能捏造', arms: {} }, 'judgment-bbb': { family: 'judgment', text: 'T2', label: null, arms: {} } },
+    decisionFirst: ['【結論】舊行不直接進頁（結論自組）', '【邊界】這次測量可說明 X；無法說明 Y；judgment-bbb 這條也要被換掉。', '【建議·改 skill】卡住的預期檢查：fact-aaa（帶 2/3、不帶 1/3）', '【建議·改用法】先用在高全對情境', '【建議·發掘】延伸'],
+    assertions: { 'fact-aaa': { family: 'fact', label: '日期不能捏造' }, 'judgment-bbb': { family: 'judgment', label: null }, 'orient': { family: 'orientation', label: null }, '檢查-甲': { family: 'fact', label: null }, 'fact-evil': { family: 'fact', label: '標籤裡藏了 judgment-bbb' } },
     cases: [
-      { id: 'case-01-trap', type: 'trap', note: '塞了假日期的會議紀錄', arms: { with: { invalidRuns: 0, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 2, scenario: { success: 1, notFirstPass: 2 } } } },
-      { id: 'case-02-clean', type: 'clean', note: null, arms: { with: { invalidRuns: 0, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 0, scenario: { success: 2, notFirstPass: 1 } } } },
+      { id: 'case-01-trap', type: 'trap', note: '塞了假日期的會議紀錄', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 2, validRuns: 1, scenario: { success: 1, notFirstPass: 2 } } } },
+      { id: 'case-02-clean', type: 'clean', note: null, arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 3, scenario: { success: 2, notFirstPass: 1 } } } },
     ],
     cost: { with: { perSuccessCostUsd: 0.01, costComplete: true, sumCostUsd: 0.05, successRuns: 5 }, without: {} },
-    flags: ['前置檢查沒過集中：without 組有 2/3 次沒過前置檢查——測試用', '零鑑別：judgment-bbb 兩組全過——測不出差別'],
+    flags: ['零鑑別：judgment-bbb 兩組全過——測不出差別', '同格 run 高度相似：case-01-trap 平均相似度 0.84（scored-population）'],
     trigger: { should: { fired: 5, n: 6 }, shouldNot: { fired: 0, n: 12 } },
-  });
+    benefit: { rows: [{ id: 'fact-aaa', label: '日期不能捏造', kind: 'negative', with: { pass: 1, judged: 3 }, without: { pass: 2, judged: 3 } }] },
+    runsPlanned: 3,
+    ...over });
   const pp = buildPersonPage(mkRep());
-  t('personPage：全分母與主讀數已知答案（full 5/6 vs 3/6；informative＝case-01 3/3 vs 1/3）', pp.successRate.full.with.n === 5 && pp.successRate.full.with.d === 6 && pp.successRate.full.without.n === 3 && pp.successRate.full.without.d === 6 && pp.successRate.informative.with.n === 3 && pp.successRate.informative.with.d === 3 && pp.successRate.informative.without.n === 1 && JSON.stringify(pp.successRate.informative.caseIds) === '["case-01-trap"]');
-  t('personPage：修正值已知答案（gap 2、不帶側 gate-false 2 → 區間 0〜2）', (() => { const c = pp.successRate.corrections[0]; return c && c.gap === 2 && c.range.min === 0 && c.range.max === 2 && c.counts.without === 2 && c.counts.with === 0; })());
-  t('personPage：findings——集中型標歸因未定案＋分開做法；零鑑別的 id 換 family 白話', (() => { const f0 = pp.findings[0], f1 = pp.findings[1]; return f0.attribution === 'undetermined' && /內嵌在指令/.test(f0.separationHint) && f1.attribution === 'as-stated' && !/judgment-bbb/.test(f1.text) && /一條判斷檢查/.test(f1.text); })());
-  t('personPage：建議行配 actor；id 換 label', (() => { const n0 = pp.next.find((x) => x.tag === '改 skill'); return n0 && /skill 的擁有者/.test(n0.actor) && !/fact-aaa/.test(n0.text) && /日期不能捏造/.test(n0.text); })());
-  t('personPage：map thin 徽章（d≤3）＋note 標籤與 id fallback', pp.map[0].thin === true && pp.map[0].label === '塞了假日期的會議紀錄' && pp.map[1].label === 'clean');
-  t('personPage（陰性）：無 decisionFirstData 的舊報告回 null', buildPersonPage({ name: 'old', arms: ['with', 'without'], cases: [] }) === null);
+  t('personPage：正式讀數＝全分母（5/6 vs 3/6，pct 預算）；事後子集（率差）＋同率題數', pp.successRate.available === true && pp.successRate.full.with.n === 5 && pp.successRate.full.with.d === 6 && pp.successRate.full.with.pct === 83 && pp.successRate.informative.with.n === 3 && pp.successRate.informative.with.d === 3 && JSON.stringify(pp.successRate.informative.caseLabels) === '["塞了假日期的會議紀錄"]' && pp.successRate.sameRateCases === 1);
+  t('personPage：反事實界線已知答案（gap 2、y≤2 → 0〜2）', (() => { const c = pp.successRate.corrections[0]; return c && c.kind === 'gate-false-counterfactual-bound' && c.gap === 2 && c.range.min === 0 && c.range.max === 2 && c.counts.without === 2; })());
+  const rateRep = mkRep({ cases: [
+    { id: 'case-01-a', type: 'trap', note: 'A', arms: { with: { invalidRuns: 0, validRuns: 2, scenario: { success: 1, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 4, scenario: { success: 2, notFirstPass: 2 } } } },
+    { id: 'case-02-b', type: 'trap', note: 'B', arms: { with: { invalidRuns: 0, validRuns: 4, scenario: { success: 1, notFirstPass: 3 } }, without: { invalidRuns: 0, validRuns: 2, scenario: { success: 1, notFirstPass: 1 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（MF-2）：率同（1/2 vs 2/4）不入子集、率異（1/4 vs 1/2）入——交叉相乘不用次數', (() => { const sr = buildPersonPage(rateRep).successRate; return JSON.stringify(sr.informative.caseLabels) === '["B"]' && sr.sameRateCases === 1; })());
+  const osRep = mkRep({ cases: [
+    { id: 'case-01-x', type: 'trap', note: '只有帶側', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 0, scenario: { success: 0, notFirstPass: 0 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（MF-2）：單側缺資料 → oneSided 明列（中文臂名）、不入 full', (() => { const sr = buildPersonPage(osRep).successRate; return sr.full.with.d === 0 && sr.oneSided.length === 1 && sr.oneSided[0].label === '只有帶側' && sr.oneSided[0].side === '帶 skill'; })());
+  const stopRep = mkRep({ decisionFirstData: { verdict: { kind: 'stop', label: '停案' } }, decisionFirst: ['【結論】pp-fx：不帶 skill 那組每次都過。', '【邊界】這次測量可說明 X。'] });
+  const ppStop = buildPersonPage(stopRep);
+  t('personPage（MF-1）：STOP → available=false、無 map、無比較型 findings', ppStop.successRate.available === false && /停案/.test(ppStop.successRate.reason) && ppStop.map.length === 0 && ppStop.findings.length === 0);
+  t('personPage（MF-5／9）：findings typed——相似度／scored-population 不進頁；零鑑別帶次數；負效益帶分母；集中未達 0.5 門檻不出（2/6）', (() => {
+    const f = pp.findings; const all = JSON.stringify(f);
+    return !/相似度|scored-population/.test(all) && f.some((x) => x.kind === 'zero-discrimination' && /每題每組各跑 3 次/.test(x.text)) && f.some((x) => x.kind === 'negative-benefit' && /帶 1\/3、不帶 2\/3/.test(x.text)) && !f.some((x) => x.kind === 'gate-concentration');
+  })());
+  const gcRep = mkRep({ cases: [
+    { id: 'case-01-trap', type: 'trap', note: 'GC', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 2, validRuns: 1, scenario: { success: 1, notFirstPass: 2 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（MF-5 陽性）：單側集中 2/3（≥0.5）→ gate-concentration 未定案＋分開做法', (() => { const f = buildPersonPage(gcRep).findings.find((x) => x.kind === 'gate-concentration'); return !!f && f.attribution === 'undetermined' && /2\/3 次沒過前置檢查/.test(f.text) && /內嵌在指令/.test(f.separationHint); })());
+  const evilRep = mkRep({ decisionFirst: ['【結論】x', '【邊界】提到 orient 與 檢查-甲 與 fact-evil。', '【建議·改 skill】修 fact-aaa 和 orient'] });
+  const ppEvil = buildPersonPage(evilRep);
+  t('personPage（MF-6）：單詞 id、CJK id、label 藏 id 全換白話', (() => { const b = ppEvil.boundary.line, n0 = ppEvil.next[0].text; return !/orient|檢查-甲|fact-evil|fact-aaa|judgment-bbb/.test(b + n0) && /一條取向觀察/.test(b) && /一條事實檢查/.test(b) && /日期不能捏造/.test(n0); })());
+  t('personPage：map 標籤——note 人話、無 note＝「情境 N（題型）」，不回退 id', pp.map[0].label === '塞了假日期的會議紀錄' && pp.map[1].label === '情境 2（乾淨對照題）' && !JSON.stringify(pp.map).includes('case-0'));
+  t('personPage（MF-8）：結論自組——不引用環節效益表、帶個位數警語', /可留用——場景全對：帶 5\/6 vs 不帶 3\/6/.test(pp.conclusion.line) && /翻一兩次就會變/.test(pp.conclusion.line) && !/環節效益表/.test(pp.conclusion.line));
+  t('personPage（陰性）：無 decisionFirstData 回 null', buildPersonPage({ name: 'old', arms: ['with', 'without'], cases: [] }) === null);
   try {
     const R2 = await import('./render.mjs');
     const rep = mkRep(); rep.personPage = pp;
     const html = R2.renderPersonPageHtml(rep);
-    t('page render：五段＋誰能動手＋算式＋樣本量句都在', ['結論', '情境地圖', '發現', '邊界', '下一步'].every((k) => html.includes(k)) && /誰能動手/.test(html) && /＝總花費/.test(html) && /這 12 次裡沒有/.test(html));
-    t('page render（禁詞）：無 assertion id、無「相似度」、無外部資源', !/fact-aaa|judgment-bbb/.test(html) && !/相似度/.test(html) && !/(src|href)=["']https?:\/\//.test(html));
+    t('page render：五段＋正式讀數＋事後子集揭露＋反事實界線＋誰能動手＋算式＋樣本量句', ['結論', '情境地圖', '發現', '邊界', '下一步'].every((k) => html.includes(k)) && /正式讀數/.test(html) && /看完結果才挑的/.test(html) && /不是偏誤校正/.test(html) && /誰能動手/.test(html) && /＝總花費/.test(html) && /這 12 次裡沒有/.test(html));
+    t('page render（禁詞）：無 id、無相似度、無外部資源', !/fact-aaa|judgment-bbb|case-0|orient|相似度/.test(html) && !/(src|href)=["']https?:\/\//.test(html));
+    const repStop = mkRep(); repStop.personPage = ppStop;
+    t('page render（MF-1）：STOP 頁無「正式讀數」、印停案理由', (() => { const h = R2.renderPersonPageHtml(repStop); return !/正式讀數/.test(h) && /停案/.test(h); })());
+    t('page render（S-11）：partial personPage（{}）誠實缺頁；map:[null] 不炸', (() => { const h1 = R2.renderPersonPageHtml({ name: 'x', personPage: {} }); let ok2 = true; try { const rep2 = mkRep(); rep2.personPage = { ...pp, map: [null] }; R2.renderPersonPageHtml(rep2); } catch { ok2 = false; } return /這一頁出不來/.test(h1) && ok2; })());
     t('page render（陰性）：無 personPage → 誠實缺頁句', /這一頁出不來/.test(R2.renderPersonPageHtml({ name: 'old' })));
   } catch (e) { t('page render 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 }

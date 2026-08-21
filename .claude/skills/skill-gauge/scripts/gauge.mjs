@@ -15,7 +15,7 @@
 //   node scripts/gauge.mjs matrix-report --config <gauge.json> --out <dir> [--rebuild-cells]  （重算矩陣總表；--rebuild-cells 連每格 report 一起重出）
 //   node scripts/gauge.mjs lock    … [--relock] [--allow-missing-prereg]              （鎖定不可靜默覆寫；預設要有 pre-registration.md）
 //   node scripts/gauge.mjs describe --config <gauge.json> --out <dir> [--rounds 3] [--runs 3] [--holdout 0.4] [--apply]  （描述優化迴圈：只改 description，held-out 選最佳，預設不寫回）
-//   node scripts/gauge.mjs html    --out <dir>                                       （只重出 report.html）
+//   node scripts/gauge.mjs html    --out <dir>                                       （重出 report.html＋page.html）
 //   node scripts/gauge.mjs preview --config <gauge.json> [--out <file.html>] [--open]  （核可頁：把 gauge.json＋pre-registration.md 整理成一頁，不用 claude 也能出、不寫 lock，給人核可用）
 //   node scripts/gauge.mjs history --config <gauge.json>                             （這份題組歷次量測；compare --config 拿最近兩次同條件的相減）
 //   壓力測試：cases[].type = "pressure" 加 rule／pressures／expectedBehavior（comply|exempt），引擎自動加「守住規則」檢查項並逐字擷取合理化說詞（pressure-capture.json）。
@@ -1468,7 +1468,7 @@ function routeLines(r, A, B, { unavailable = null } = {}) {
   const stuck = (ben?.rows || []).filter((x) => x.with.rate < 1)
     .sort((x, y) => ((x.kind === 'negative' ? 0 : 1) - (y.kind === 'negative' ? 0 : 1)) || (x.with.rate - y.with.rate) || x.id.localeCompare(y.id)).slice(0, 3);
   if (!ben) L.push('【建議·改 skill】沒有環節效益表（兩組還沒有可比的逐條判定），列不出卡住的預期檢查。');
-  else if (!stuck.length) L.push('【建議·改 skill】帶 skill 那組每條預期檢查都過了，沒有卡住的環節——這一輪沒有改 skill 的施力點。');
+  else if (!stuck.length) L.push(`【建議·改 skill】帶 skill 那組 ${ben.rows.length} 條預期檢查都過了（每題每組各跑 ${r.runsPlanned ?? '？'} 次），沒有卡住的環節——這一輪沒有改 skill 的施力點。`);
   else L.push(`【建議·改 skill】卡住的預期檢查：${stuck.map((x) => `${x.label}（帶 ${x.with.pass}/${x.with.judged}、不帶 ${x.without.pass}/${x.without.judged}${x.kind === 'negative' ? '，帶 skill 反而差、最優先' : ''}）`).join('；')}${ben.thin ? '——每格樣本薄，當線索不當定論' : ''}`);
   // 路線 B／C：由情境地圖生成
   const sm = scenarioMap(r, A, B);
@@ -1614,77 +1614,140 @@ function decisionFirstMarkdown(r) {
 
 
 // ---------- 給人看的一頁（v1.3）：從 report.json 派生 personPage 結構化資料 ----------
-// 數字邏輯全在這裡（selftest 打已知答案）；render.mjs 只排版。來源：docs/roadmap.md「v1.3 候選」＋
-// 三位讀者角色 2/5 逐字回饋（維護者本機 gauge/v13-page-dev/spec.md）。頁面五段：結論／情境地圖／發現／邊界／下一步；
-// 不出現 assertion id、計分格數、相似度——id 一律換白話 label（沒 label 就換 family 白話），這是機械規則不是排版偏好。
+// 數字邏輯全在這裡（selftest 打已知答案）；render.mjs 只格式化、不算數。來源：docs/roadmap.md「v1.3 候選」＋
+// 三位讀者角色 2/5 逐字回饋。頁面五段：結論／情境地圖／發現／邊界／下一步。
+// 紀律（R1 修正輪定版）：
+//  - 不出現 assertion id／case id／相似度／計分格總數——id 用「已知 token 精確替換」（不是 regex 猜），
+//    label 自含別的 id 就退 family 白話；case 沒有 note 就用「情境 N（題型）」，絕不回退原始 id。
+//  - findings 走 typed allowlist（從結構化欄位算），不搬自由文字 flags——flags 是工程層的，留在 report。
+//  - STOP／資料不足：不產任何兩臂比較（安全探針的部分資料不冒充完整比較）。
+//  - informative 子集＝事後挑選：用「率差」（交叉相乘）判、單側缺資料明列不靜默；全分母是正式讀數，
+//    子集標明「依本次結果事後挑出、會放大表面差距、不可作推論證據」（此處與 roadmap 原句「當主敘事」
+//    不同——誠實度優先，改動已記 spec 供維護者裁）。
+//  - 修正值改稱「反事實界線」：gap＋x−y（x≤帶側沒過前置次數、y≤不帶側）——不是偏誤校正、不是信賴區間。
 const FAMILY_ZH = { gate: '一條前置檢查', fact: '一條事實檢查', judgment: '一條判斷檢查', orientation: '一條取向觀察' };
+const TYPE_ZH = { trap: '陷阱題', clean: '乾淨對照題', negative: '負向對照題', pressure: '壓力題' };
 function buildPersonPage(r) {
   const arms = r?.arms || [];
   if (arms.length < 2) return null;
   const A = arms[0], B = arms[1];
   const df = r.decisionFirstData;
-  if (!df || !df.verdict) return null; // 舊報告（無結構化裁決）：頁面走誠實缺頁句
+  if (!df || !df.verdict) return null; // 舊報告：頁面走誠實缺頁句
   const dfl = r.decisionFirst || [];
   const pick = (tag) => dfl.find((l) => l.startsWith(tag)) || null;
-  // assertion id → 白話：label 優先，沒 label 用 family 白話；兩者皆無才留原樣
-  const labelOfId = (id) => { const a = r.assertions?.[id]; if (!a) return null; return a.label || FAMILY_ZH[a.family] || null; };
-  const deTech = (text) => String(text ?? '').replace(/[A-Za-z][A-Za-z0-9_]*(?:[-:][A-Za-z0-9_-]+)+/g, (m) => labelOfId(m) || m);
-  // 場景列（全對制逐題）：invalidRuns＝沒過前置檢查（gate-false）的次數（buildReport 已逐題逐臂在數）
-  const caseRows = (r.cases || []).map((c) => {
-    const pa = c.arms?.[A] || {}, pb = c.arms?.[B] || {};
-    const den = (sc) => sc ? (sc.success || 0) + (sc.notFirstPass || 0) : 0;
-    return { id: c.id, type: c.type || null, note: c.note || null,
-      with: { n: pa.scenario?.success || 0, d: den(pa.scenario) },
-      without: { n: pb.scenario?.success || 0, d: den(pb.scenario) },
-      gateFalse: { with: pa.invalidRuns || 0, without: pb.invalidRuns || 0 } };
-  }).filter((x) => x.with.d > 0 || x.without.d > 0);
-  const sum = (rows, side) => rows.reduce((a, x) => ({ n: a.n + x[side].n, d: a.d + x[side].d }), { n: 0, d: 0 });
-  const full = { with: sum(caseRows, 'with'), without: sum(caseRows, 'without') };
-  // 「測得出差別的情境」＝兩組都有資料且全對次數不同的題——主讀數用它；全分母同時給，兩個都印（roadmap：同一份資料兩種讀法都要出）
-  const infRows = caseRows.filter((x) => x.with.d > 0 && x.without.d > 0 && x.with.n !== x.without.n);
-  const informative = infRows.length ? { with: sum(infRows, 'with'), without: sum(infRows, 'without'), caseIds: infRows.map((x) => x.id) } : null;
-  // 修正值（「打折要給數字」的機械化）：沒過前置檢查的次數若全數改判成功（最壞回歸），差距的區間
-  const kW = caseRows.reduce((a, x) => a + x.gateFalse.with, 0), kWo = caseRows.reduce((a, x) => a + x.gateFalse.without, 0);
-  const corrections = [];
-  if (full.with.d > 0 && full.with.d === full.without.d && (kW + kWo) > 0) {
-    const gap = full.with.n - full.without.n;
-    corrections.push({ kind: 'gate-false-reattribution', gap, counts: { with: kW, without: kWo }, range: { min: gap - kWo, max: gap + kW } });
+  // --- 已知 token 精確替換（MF-6）：assertion id（含 held:）→ label（label 不含其他 id）或 family 白話；case id → 人話標籤 ---
+  const aIds = Object.keys(r.assertions || {});
+  const caseList = (r.cases || []);
+  const caseLabelOf = new Map(caseList.map((c, i) => [c.id, c.note || `情境 ${i + 1}（${TYPE_ZH[c.type] || '一般題'}）`]));
+  const cIds = [...caseLabelOf.keys()];
+  const labelFor = (id) => {
+    const a = r.assertions?.[id]; if (!a) return id;
+    const lb = a.label;
+    const clean = lb && ![...aIds, ...cIds].some((k) => k !== id && String(lb).includes(k)) && !String(lb).includes(id) ? lb : null;
+    return clean || FAMILY_ZH[a.family] || '一條檢查';
+  };
+  const tokenMap = [...aIds.map((id) => [id, labelFor(id)]), ...cIds.map((id) => [id, caseLabelOf.get(id)])]
+    .sort((x, y) => y[0].length - x[0].length); // 長 token 先換，避免子字串誤傷
+  const sanitize = (text) => { let t = String(text ?? ''); for (const [id, rep] of tokenMap) t = t.split(id).join(rep); return t; };
+  // --- 比較可用性（MF-1）：停案／資料不足不做任何兩臂彙總 ---
+  const blocked = df.verdict.kind === 'stop' || df.verdict.kind === 'no-data';
+  let successRate, map = [];
+  if (blocked) {
+    successRate = { available: false, reason: df.verdict.kind === 'stop'
+      ? '停案：未完成同題組同次數的兩臂比較——不算全對率、不畫情境地圖（帶 skill 那組只有安全探針等部分資料，不能冒充完整比較）。'
+      : `資料不足：${sanitize(df.reason || '兩臂還沒有可比的資料')}——不算全對率、不畫情境地圖。` };
+  } else {
+    const rows = [], oneSided = [];
+    caseList.forEach((c, i) => {
+      const pa = c.arms?.[A] || {}, pb = c.arms?.[B] || {};
+      const den = (sc) => sc ? (sc.success || 0) + (sc.notFirstPass || 0) : 0;
+      const w = { n: pa.scenario?.success || 0, d: den(pa.scenario) }, wo = { n: pb.scenario?.success || 0, d: den(pb.scenario) };
+      const label = caseLabelOf.get(c.id);
+      if (w.d > 0 && wo.d > 0) rows.push({ id: c.id, label, type: c.type || null, with: w, without: wo, gateFalse: { with: pa.invalidRuns || 0, without: pb.invalidRuns || 0 } });
+      else if (w.d > 0 || wo.d > 0) oneSided.push({ label, side: w.d > 0 ? '帶 skill' : '不帶 skill' }); // 單側缺資料：明列，不靜默排除（MF-2）
+    });
+    const pctOf = (n, d) => (d ? Math.round((n / d) * 100) : null);
+    const cellOf = (x) => ({ n: x.n, d: x.d, pct: pctOf(x.n, x.d) });
+    const sum = (rs, side) => rs.reduce((a, x) => ({ n: a.n + x[side].n, d: a.d + x[side].d }), { n: 0, d: 0 });
+    const full = { with: cellOf(sum(rows, 'with')), without: cellOf(sum(rows, 'without')) };
+    // informative＝率不同（交叉相乘，整數安全；MF-2）；這是事後挑選（MF-3），揭露交 renderer 印，選法存 selection
+    const infRows = rows.filter((x) => x.with.n * x.without.d !== x.without.n * x.with.d);
+    const informative = infRows.length ? {
+      with: cellOf(sum(infRows, 'with')), without: cellOf(sum(infRows, 'without')),
+      caseLabels: infRows.map((x) => x.label),
+      selection: { rule: 'rate-differs-cross-multiplied', postHoc: true },
+    } : null;
+    const sameRateCases = rows.length - infRows.length;
+    // 反事實界線（MF-4）：x∈[0,k帶]、y∈[0,k不帶] 改判成功 → gap＋x−y ∈ [gap−k不帶, gap＋k帶]；同分母才用次數
+    const kW = rows.reduce((a, x) => a + x.gateFalse.with, 0), kWo = rows.reduce((a, x) => a + x.gateFalse.without, 0);
+    const corrections = [];
+    if (full.with.d > 0 && full.with.d === full.without.d && (kW + kWo) > 0) {
+      const gap = full.with.n - full.without.n;
+      corrections.push({ kind: 'gate-false-counterfactual-bound', gap, counts: { with: kW, without: kWo }, range: { min: gap - kWo, max: gap + kW } });
+    }
+    successRate = { available: true, full, informative, sameRateCases, oneSided, corrections };
+    map = rows.map((x) => ({ label: x.label, type: x.type, with: cellOf(x.with), without: cellOf(x.without), thin: (x.with.d > 0 && x.with.d <= 3) || (x.without.d > 0 && x.without.d <= 3) }));
   }
-  // 每個派生數字都帶算式件（分子／分母），頁面照件印，不出孤兒數字
-  const numbers = {};
-  for (const [key, arm] of [['with', A], ['without', B]]) {
-    const c = r.cost?.[arm] || {};
-    if (c.perSuccessCostUsd != null && c.costComplete && c.sumCostUsd != null && c.successRuns) {
-      numbers[key] = { perSuccessCostUsd: { value: c.perSuccessCostUsd, numerator: c.sumCostUsd, denominator: c.successRuns } };
+  // --- findings：typed allowlist（MF-5），全部帶樣本量（MF-9），不搬 flags 自由文字 ---
+  const findings = [];
+  if (!blocked) {
+    for (const [armName, side] of [[A, '帶'], [B, '不帶']]) {
+      const inv = caseList.reduce((n, c) => n + (c.arms?.[armName]?.invalidRuns || 0), 0);
+      const tot = caseList.reduce((n, c) => n + (c.arms?.[armName]?.invalidRuns || 0) + (c.arms?.[armName]?.validRuns || 0), 0);
+      if (tot > 0 && inv / tot >= 0.5) findings.push({
+        kind: 'gate-concentration', attribution: 'undetermined',
+        text: `${side} skill 那組有 ${inv}/${tot} 次沒過前置檢查（連基本要求都沒回應到），高度集中在單側。`,
+        alternatives: ['出題方式的痕跡（材料的給法讓這一組吃虧，或前置檢查寫成了 skill 專屬格式）', 'skill 真的改變了模型讀材料／交付的行為——那是效果，不是雜訊'],
+        separationHint: '把該情境的材料換一種給法（內嵌在指令 vs 存成檔案）重跑同一題：集中若消失＝出題痕跡；仍在＝skill 的真實影響。分不開之前，這現象不能當雜訊扣掉，也不能當效果加回來。',
+      });
+    }
+    const zero = (r.flags || []).filter((f) => typeof f === 'string' && f.startsWith('零鑑別')).length;
+    if (zero) findings.push({ kind: 'zero-discrimination', attribution: 'mechanical',
+      text: `${zero} 條檢查兩組全做到（每題每組各跑 ${r.runsPlanned ?? '？'} 次）——這些條測不出差別，差距不靠它們。` });
+    for (const row of (r.benefit?.rows || []).filter((x) => x.kind === 'negative')) {
+      findings.push({ kind: 'negative-benefit', attribution: 'mechanical',
+        text: `「${sanitize(row.label || '')}」帶 skill 反而較差：帶 ${row.with?.pass}/${row.with?.judged}、不帶 ${row.without?.pass}/${row.without?.judged}——改 skill 時最優先。` });
+    }
+    for (const sc of (r.pressure?.scenarios || [])) {
+      const v = sc.arms?.[A]?.violated || 0, t2 = sc.arms?.[A]?.total || 0;
+      if (v > 0) findings.push({ kind: 'pressure-fold', attribution: 'mechanical',
+        text: `壓力題「${caseLabelOf.get(sc.case) || '壓力題'}」帶 skill 那組 ${t2 || '？'} 次裡折了 ${v} 次（順著壓力違反規則）。` });
     }
   }
-  // 發現：flags 逐條過 deTech；「前置檢查沒過集中」型＝歸因未定案＋兩個候選解釋＋分開做法（roadmap 歸因紀律：
-  // 標成雜訊／痕跡的現象必須寫出能與真效果分開的具體做法，否則不得寫成已定案）
-  const findings = (r.flags || []).map((f) => {
-    if (f.startsWith('前置檢查沒過集中')) return {
-      text: deTech(f), attribution: 'undetermined',
-      alternatives: ['出題方式的痕跡（例如材料的給法讓某一組比較吃虧，或前置檢查寫成了 skill 專屬格式）', 'skill 真的改變了模型讀材料／交付的行為——那是效果，不是雜訊'],
-      separationHint: '把該情境的材料換一種給法（內嵌在指令 vs 存成檔案）重跑同一題：集中若消失＝出題痕跡；仍在＝skill 的真實影響。分不開之前，這現象不能當雜訊扣掉，也不能當效果加回來。' };
-    return { text: deTech(f), attribution: 'as-stated' };
-  });
-  // 下一步：決策摘要的建議行（引擎自產 tag）配「誰能動手」
+  // --- 結論（MF-8）：從結構化欄位自組，不引用本頁沒有的東西；停案沿用停案句（無指路） ---
+  let conclusionLine;
+  if (blocked) conclusionLine = sanitize(pick('【結論】'));
+  else {
+    const f = successRate.full;
+    const gap = f.with.n - f.without.n;
+    const frag = Math.abs(gap) > 0 && Math.abs(gap) <= 3 ? `；差距 ${Math.abs(gap)} 次屬個位數，翻一兩次就會變` : '';
+    conclusionLine = `${df.verdict.label || ''}——場景全對：帶 ${f.with.n}/${f.with.d} vs 不帶 ${f.without.n}/${f.without.d}${frag}。細節看下面的情境地圖與發現。`;
+  }
+  // --- 下一步：沿用引擎建議行（已含計數與 label），過 sanitize＋配 actor ---
   const ACTORS = [['【建議·改題目】', '出題的人（跑這次量測的人）'], ['【建議·改 skill】', 'skill 的擁有者（能改 SKILL.md 的人）'], ['【建議·改用法】', '使用它的人（不用改任何檔案）'], ['【建議·發掘】', '使用它的人（不用改任何檔案）']];
   const next = dfl.filter((l) => l.startsWith('【建議·')).map((l) => {
     const hit = ACTORS.find(([tag]) => l.startsWith(tag));
-    return { tag: hit ? hit[0].slice('【建議·'.length, -1) : null, actor: hit ? hit[1] : null, text: deTech(hit ? l.slice(hit[0].length) : l) };
+    return { tag: hit ? hit[0].slice('【建議·'.length, -1) : null, actor: hit ? hit[1] : null, text: sanitize(hit ? l.slice(hit[0].length) : l) };
   });
+  const tg = r.trigger || null;
   return {
-    conclusion: {
-      label: df.verdict.label || null, kind: df.verdict.kind || null, line: deTech(pick('【結論】')),
-      scope: '這一頁回答的是「它宣稱會做的做到了嗎」「哪些情境行、哪些不行」；值不值得留在工作流裡，要拿這一頁對照你的成本與替代方案自己裁——這一頁不代答。',
-    },
-    successRate: { full, informative, corrections },
-    map: caseRows.map((x) => ({ id: x.id, type: x.type, label: x.note || x.id.replace(/^case-\d+-/, ''), with: x.with, without: x.without, thin: (x.with.d > 0 && x.with.d <= 3) || (x.without.d > 0 && x.without.d <= 3) })),
-    findings,
-    boundary: { line: deTech(pick('【邊界】')) },
+    conclusion: { label: df.verdict.label || null, kind: df.verdict.kind || null, line: conclusionLine,
+      scope: '這一頁回答的是「它宣稱會做的做到了嗎」「哪些情境行、哪些不行」；值不值得留在工作流裡，要拿這一頁對照你的成本與替代方案自己裁——這一頁不代答。' },
+    successRate, map, findings,
+    boundary: { line: sanitize(pick('【邊界】')) },
     next,
-    trigger: r.trigger ? { should: { fired: r.trigger.should?.fired ?? null, n: r.trigger.should?.n ?? null }, shouldNot: { fired: r.trigger.shouldNot?.fired ?? null, n: r.trigger.shouldNot?.n ?? null } } : null,
-    numbers,
+    trigger: tg ? {
+      should: { fired: tg.should?.fired ?? null, n: tg.should?.n ?? null, missed: (tg.should?.n != null && tg.should?.fired != null) ? tg.should.n - tg.should.fired : null },
+      shouldNot: { fired: tg.shouldNot?.fired ?? null, n: tg.shouldNot?.n ?? null },
+    } : null,
+    numbers: (() => {
+      const numbers = {};
+      for (const [key, arm] of [['with', A], ['without', B]]) {
+        const c = r.cost?.[arm] || {};
+        if (c.perSuccessCostUsd != null && c.costComplete && c.sumCostUsd != null && c.successRuns) numbers[key] = { perSuccessCostUsd: { value: c.perSuccessCostUsd, numerator: c.sumCostUsd, denominator: c.successRuns } };
+      }
+      return numbers;
+    })(),
   };
 }
 
@@ -1836,9 +1899,12 @@ async function writeHtml(outDir, data, kind) {
   const p = path.join(outDir, `${kind}.html`);
   let out = null;
   try { fs.writeFileSync(p, fn(data, {})); out = p; } catch (e) { log(`⚠ ${kind}.html 產生失敗：${e?.message || e}`); }
-  // v1.3：report 同時出「給人看的一頁」（page.html）——writeReport／html 重出／matrix 重出全走這個咽喉點
+  // v1.3：report 同時出「給人看的一頁」（page.html）——writeReport／html 重出／matrix 重出全走這個咽喉點。
+  // 原子替換：先寫 .tmp 再 rename；失敗時把舊 page.html 一併刪掉（S-12：不留與 report.json 不同步的舊頁）。
   if (kind === 'report' && typeof R.renderPersonPageHtml === 'function') {
-    try { fs.writeFileSync(path.join(outDir, 'page.html'), R.renderPersonPageHtml(data, {})); } catch (e) { log(`⚠ page.html 產生失敗：${e?.message || e}`); }
+    const pp = path.join(outDir, 'page.html');
+    try { const tmp = pp + '.tmp'; fs.writeFileSync(tmp, R.renderPersonPageHtml(data, {})); fs.renameSync(tmp, pp); }
+    catch (e) { log(`⚠ page.html 產生失敗（已移除舊檔避免誤讀）：${e?.message || e}`); try { fs.rmSync(pp, { force: true }); fs.rmSync(pp + '.tmp', { force: true }); } catch { /* 清不掉就算了 */ } }
   }
   return out;
 }
@@ -2395,7 +2461,7 @@ async function main() {
       const res = await runPipeline(cfg, { outDir, root, runs, parallel, judgeModel, claudeVersion, withTrigger: !!args['with-trigger'], interleave: !!args.interleave, ignoreStopRule: !!args['ignore-stop-rule'] });
       console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
       if (res.status === 'stopped') { console.log(`\n已依停案規則停止：不帶 skill 那組每條計分檢查每次都過，帶 skill 那組只跑了安全探針（壓力題／負向對照題），報告已產出（這是正常結束，exit 3 只是給腳本判斷用）。要硬跑加 --ignore-stop-rule；要改題就改 gauge.json 後重新核可＋lock。→ ${outDir}`); process.exit(3); }
-      console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
+      console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html；給人看的一頁：page.html）`);
       return;
     }
     // run：只執行（可指定 --arms）
@@ -2417,7 +2483,7 @@ async function main() {
     applyEffective(cfg, outDir);
     await writeReport(cfg, outDir);
     console.log(fs.readFileSync(path.join(outDir, 'report.md'), 'utf8'));
-    console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html）`);
+    console.log(`→ ${path.join(outDir, 'report.md')}（HTML：report.html；給人看的一頁：page.html）`);
     return;
   }
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
