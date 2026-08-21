@@ -1364,6 +1364,13 @@ export function renderPersonPageHtml(report, opts = {}) {
       const one = (k, label) => { const m = nums[k]?.perSuccessCostUsd; return isObj(m) ? `${label} ${fmtUsd(m.value, dg)}（＝總花費 ${fmtUsd(m.numerator, dg)} ÷ 全對 ${esc(txt(m.denominator))} 次）` : null; };
       const parts = [one('with', '帶'), one('without', '不帶')].filter(Boolean);
       if (parts.length) lines.push(`<p>每次全對的花費：${parts.join('；')}。</p>`);
+      // 維護者裁決④條件：時間與 token 成本上頁——全分母讀法配成本，效率差一眼可見
+      const pair = (field, label, unit, digits) => { const a = nums.with?.[field], b = nums.without?.[field]; const f = (m) => isObj(m) && num(m.value) !== null ? `${fmtNum(m.value, digits)}${unit}` : null; const fa = f(a), fb = f(b); return (fa || fb) ? `${label}：帶 ${fa ?? '—'} vs 不帶 ${fb ?? '—'}` : null; };
+      const costPairs = [pair('medianDurationS', '每次執行時間中位', ' 秒', 1), pair('medianOutputTokens', '輸出 token 中位', '', 0)].filter(Boolean);
+      if (costPairs.length) {
+        const rw = num(nums.with?.medianDurationS?.runs ?? nums.with?.medianOutputTokens?.runs), rwo = num(nums.without?.medianDurationS?.runs ?? nums.without?.medianOutputTokens?.runs);
+        lines.push(`<p>${costPairs.join('；')}${rw !== null || rwo !== null ? `（各組樣本：帶 ${rw ?? '—'} 次、不帶 ${rwo ?? '—'} 次執行的中位數）` : ''}。</p>`);
+      }
     }
   }
   if (nz(concl.scope)) lines.push(`<p><em>${esc(txt(concl.scope))}</em></p>`);

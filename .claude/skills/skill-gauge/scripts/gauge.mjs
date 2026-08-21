@@ -1773,10 +1773,16 @@ function buildPersonPage(r) {
       shouldNot: { fired: tg.shouldNot?.fired ?? null, n: tg.shouldNot?.n ?? null },
     } : null,
     numbers: (() => {
+      // 維護者 2026-08-21 裁決④條件：正式讀數（全分母）要配時間與 token 成本一起看，差別才顯——
+      // 對應 08-20「效果×成本二維」判準。全部取自 cost[arm] 既有欄位，renderer 只排版。
       const numbers = {};
       for (const [key, arm] of [['with', A], ['without', B]]) {
         const c = r.cost?.[arm] || {};
-        if (c.perSuccessCostUsd != null && c.costComplete && c.sumCostUsd != null && c.successRuns) numbers[key] = { perSuccessCostUsd: { value: c.perSuccessCostUsd, numerator: c.sumCostUsd, denominator: c.successRuns } };
+        const entry = {};
+        if (c.perSuccessCostUsd != null && c.costComplete && c.sumCostUsd != null && c.successRuns) entry.perSuccessCostUsd = { value: c.perSuccessCostUsd, numerator: c.sumCostUsd, denominator: c.successRuns };
+        if (c.medianDurationS != null) entry.medianDurationS = { value: c.medianDurationS, runs: c.runs ?? null };
+        if (c.medianOutputTokens != null) entry.medianOutputTokens = { value: c.medianOutputTokens, runs: c.runs ?? null };
+        if (Object.keys(entry).length) numbers[key] = entry;
       }
       return numbers;
     })(),

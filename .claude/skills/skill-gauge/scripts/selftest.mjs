@@ -1286,7 +1286,7 @@ try {
       { id: 'case-01-trap', type: 'trap', note: '塞了假日期的會議紀錄', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 2, validRuns: 1, scenario: { success: 1, notFirstPass: 2 } } } },
       { id: 'case-02-clean', type: 'clean', note: null, arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 3, scenario: { success: 2, notFirstPass: 1 } } } },
     ],
-    cost: { with: { perSuccessCostUsd: 0.01, costComplete: true, sumCostUsd: 0.05, successRuns: 5 }, without: {} },
+    cost: { with: { perSuccessCostUsd: 0.01, costComplete: true, sumCostUsd: 0.05, successRuns: 5, medianDurationS: 3.2, medianOutputTokens: 850, runs: 6 }, without: { medianDurationS: 5, medianOutputTokens: 1200, runs: 6 } },
     flags: ['零鑑別：judgment-bbb 兩組全過——測不出差別', '同格 run 高度相似：case-01-trap 平均相似度 0.84（scored-population）'],
     trigger: { should: { fired: 5, n: 6 }, shouldNot: { fired: 0, n: 12 } },
     benefit: { rows: [{ id: 'fact-aaa', label: '日期不能捏造', kind: 'negative', with: { pass: 1, judged: 3 }, without: { pass: 2, judged: 3 } }] },
@@ -1351,6 +1351,8 @@ try {
     const rep = mkRep(); rep.personPage = pp;
     const html = R2.renderPersonPageHtml(rep);
     t('page render：五段＋正式讀數＋事後子集揭露＋反事實界線＋誰能動手＋算式＋樣本量句', ['結論', '情境地圖', '發現', '邊界', '下一步'].every((k) => html.includes(k)) && /正式讀數/.test(html) && /看完結果才挑的/.test(html) && /不是偏誤校正/.test(html) && /誰能動手/.test(html) && /＝總花費/.test(html) && /這 12 次裡沒有/.test(html));
+    t('page render（裁決④條件）：時間與 token 成本上頁＋樣本數；缺值側印 —', /每次執行時間中位：帶 3\.2 秒 vs 不帶 5\.0 秒/.test(html) && /輸出 token 中位：帶 850 vs 不帶 1200/.test(html) && /各組樣本：帶 6 次、不帶 6 次執行的中位數/.test(html));
+    t('page render（裁決④條件陰性）：無時間／token 資料的報告不出該行', (() => { const rep2 = mkRep({ cost: { with: {}, without: {} } }); rep2.personPage = buildPersonPage(rep2); const h2 = R2.renderPersonPageHtml(rep2); return !/每次執行時間中位/.test(h2) && !/輸出 token 中位/.test(h2); })());
     const repOvr = mkRep({ flags: ['次數與核可不同：x'] }); repOvr.personPage = buildPersonPage(repOvr);
     t('page render（critic 三輪）：覆寫旗標→結論卡頂出「試跑口徑」警語；無旗標的頁沒有', /試跑口徑：1 項執行條件與核可不同/.test(R2.renderPersonPageHtml(repOvr)) && !/試跑口徑/.test(html));
     t('page render（禁詞）：無 id、無相似度、無外部資源', !/fact-aaa|judgment-bbb|case-0|orient|相似度/.test(html) && !/(src|href)=["']https?:\/\//.test(html));
