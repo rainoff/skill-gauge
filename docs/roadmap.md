@@ -115,7 +115,7 @@ skill-gauge 最終要成為的東西，一句話：**讓使用者（含企業級
 
 ## 2026-08-19 codex 全包複核留下的待辦（引擎面；審查原稿存於維護者私有紀錄 repo，不在本 repo）
 
-- lock 只鎖檔案：~~`--runs`／`--judge-model`／`--effort`／matrix 的 `--models --efforts` 可在核可後覆寫且核可頁看不到~~（2026-08-21 已收：前三者覆寫＝CLI 警告＋報告旗標＋page 試跑警語；`--models`／`--efforts` 臨時格＝逐格「矩陣格與核可不同」旗標＋CLI 警告）；`baseline`／`trigger`／`describe` 不驗 lock、不做已知答案檢查；`--runs 0` 或非數字沒擋
+- lock 只鎖檔案：~~`--runs`／`--judge-model`／`--effort`／matrix 的 `--models --efforts` 可在核可後覆寫且核可頁看不到~~（2026-08-21 已收：前三者覆寫＝CLI 警告＋報告旗標＋page 試跑警語；`--models`／`--efforts` 臨時格＝CLI 警告＋**與核可網格不同的格**逐格「矩陣格與核可不同」旗標）；`baseline`／`trigger`／`describe` 不驗 lock、不做已知答案檢查；`--runs 0` 或非數字沒擋
 - 停案 INCOMPLETE 規則與 SKILL 第 4 步不一致（只在「有效格全過但不完整」才判 INCOMPLETE）；INCOMPLETE 也不停 pipeline
 - 從 runs/ 內 gauge.json 副本載入時相對路徑少一層（`grade --out`／`report --out`）；分段 `run` 不寫 effective.json；`grade`／`report` 不驗 lock；同 judge 的舊 grading.json 直接沿用
 - 資料不完整仍出粗分與翻格句；摘要沒把 pre-registration 的可說明／無法說明原文帶進來

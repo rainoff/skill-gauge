@@ -2013,7 +2013,7 @@ const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').re
 function matrixCombos(cfg, args) {
   let combos = Array.isArray(cfg.matrix) ? cfg.matrix.map((m) => ({ executorModel: m.executorModel || m.model || cfg.executorModel || null, effort: m.effort || null })) : [];
   if (args.models || args.efforts) {
-    log('⚠ --models／--efforts 是臨時格，會取代核可頁上的 matrix 網格：試跑口徑，報告每格會標記，不當正式結論');
+    log('⚠ --models／--efforts 是臨時格，會取代核可頁上的 matrix 網格：試跑口徑，與核可網格不同的格會在報告標記，不當正式結論');
     const models = args.models ? String(args.models).split(',').map((x) => x.trim()).filter(Boolean) : [cfg.executorModel || null];
     const efforts = args.efforts ? String(args.efforts).split(',').map((x) => x.trim()).filter(Boolean) : [null];
     combos = []; for (const m of models) for (const e of efforts) combos.push({ executorModel: m, effort: e });
