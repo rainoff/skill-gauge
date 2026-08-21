@@ -138,7 +138,10 @@ function detectPluginContext(skillAbs) {
       .filter((x) => typeof x === 'string' && (x === '.' || x.startsWith('./')))
       .map((x) => path.resolve(pluginRoot, x))
       .filter((root) => root === pluginRoot || root.startsWith(pluginRoot + path.sep));
-    if (underDefault || customRoots.some(within)) skillsScope = true;
+    // 特判（R3）：'.'／'./' 官方語意是「root 這個資料夾本身直接是一個 skill」，不是「root 下全部都是」——
+    // resolve 到 pluginRoot 的條目只做相等判定，其餘條目維持「相等或其下」（容器與直指兩用）。
+    const inEntry = (root) => (root === pluginRoot ? skillReal === pluginRoot : within(root));
+    if (underDefault || customRoots.some(inEntry)) skillsScope = true;
     else if (isObjManifest) skillsScope = false;
   }
   // mcp__ 引用掃描：迭代（不遞迴，避免深樹爆 stack）＋三重上限（R1-5）；超限記 scanTruncated，

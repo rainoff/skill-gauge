@@ -1192,6 +1192,8 @@ try {
   fs.writeFileSync(path.join(dot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'dotty', skills: '.' }));
   fs.writeFileSync(path.join(dot, 'SKILL.md'), 'root skill');
   t('外掛偵測（R2）：skills 為 string "."→root 本身是 skill，scope=true', detectPluginContext(dot)?.skillsScope === true);
+  const dsk = path.join(dot, 'other', 'x'); fs.mkdirSync(dsk, { recursive: true }); fs.writeFileSync(path.join(dsk, 'SKILL.md'), 'x');
+  t('外掛偵測（R3）：skills "." 只指 root 本身——root 下非預設路徑的後代 scope=false，不被 "." 放大成全樹', detectPluginContext(dsk)?.skillsScope === false);
   const cust = path.join(pd, 'cust'), csk = path.join(pd, 'cust', 'custom', 's');
   fs.mkdirSync(path.join(cust, '.claude-plugin'), { recursive: true }); fs.mkdirSync(csk, { recursive: true });
   fs.writeFileSync(path.join(cust, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'custy', skills: './custom/' }));
