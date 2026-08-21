@@ -63,11 +63,10 @@ On the same locked task set you can do four more things:
 |---|---|---|
 | **Three templates** | [templates/](templates/) | Task sheet (`case.md`), the contract between you and the executing AI (`pre-registration.md`), results report (`results.md`) |
 | **A real measurement** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | The full chain of one real measurement (sanitized rewrite): pre-registration → execution → results |
-
-**That measurement caught a confound, not an effect** — the result went against the repo maintainer's own interest, and every reason is kept as-is; this is where to see what an honest report looks like (original runs and grading evidence are not in the repo, so it can't be replayed verbatim).
-
 | **One exercise** | [exercises/01-meeting-notes-skill.md](exercises/01-meeting-notes-skill.md) | Design a measurement on paper for a fictional skill, no code to run |
 | **Teaching fixture** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | A ten-line meeting-notes skill plus a runnable `gauge.json` (with pressure tasks, 16 trigger tasks, a two-cell matrix). How to run it — including a zero-cost fake-model walkthrough — is in the [fixture guide](exercises/fixtures/meeting-notes/README.md). |
+
+**That measurement caught a confound, not an effect** — the result went against the repo maintainer's own interest, and every reason is kept as-is; this is where to see what an honest report looks like (original runs and grading evidence are not in the repo, so it can't be replayed verbatim).
 
 ## How to install
 

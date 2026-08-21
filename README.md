@@ -64,10 +64,9 @@ git clone https://github.com/rainoff/skill-gauge.git && cd skill-gauge && claude
 | **模板三份** | [templates/](templates/) | 出題單（`case.md`）、開跑前與執行 AI 的契約（`pre-registration.md`）、結果報告（`results.md`） |
 | **實測範例** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | 一次真實測量的全貌（脫敏轉寫）：預先登錄 → 執行 → 結果 |
 | **練習一題** | [exercises/01-meeting-notes-skill.md](exercises/01-meeting-notes-skill.md) | 紙上為一個虛構 skill 設計測量，不用執行程式 |
+| **教具** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | 一個十行的會議記錄 skill＋一套能直接執行的 `gauge.json`（含壓力題、16 題觸發題、兩格矩陣）。跑法（含免花錢的假模型走法）見[教具說明](exercises/fixtures/meeting-notes/README.md)。 |
 
 實測範例那一次量到的是**變因不是效果**，結果對本 repo 開發者不利，每一條原因照實留著——誠實的報告長什麼樣可以在這裡看到（原始 run 與評分證據不在 repo，不能逐字重跑）。
-
-| **教具** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | 一個十行的會議記錄 skill＋一套能直接執行的 `gauge.json`（含壓力題、16 題觸發題、兩格矩陣）。跑法（含免花錢的假模型走法）見[教具說明](exercises/fixtures/meeting-notes/README.md)。 |
 
 ## 如何使用
 
