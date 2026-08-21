@@ -59,6 +59,7 @@ v0 的測法只有兩組：一組不給 skill，一組給真的 skill。這樣�
 - 給人看的一頁（v1.3）的殘餘加固（2026-08-21 codex v1.3-R3 建議，不影響現版正確性）：renderer／檔案系統可注入 adapter，補 page 產出失敗的非零退出 runtime 測試；S-11 guard 再驗兩臂 n/d/pct 完整性；出題 schema 考慮強制 assertion id 帶連字號（根絕 id 撞散文英文字的殘餘）。
 - 給人看的一頁的 sanitizer 既存邊界案例（2026-08-21 codex v1.3-R4 出口輪列記，fb5edb3 前即存在、非 regression）：①「替換後合成 id」組合鏈（id x 的 label 恰好與另一 id 的前綴拼得起來時，替換完反而拼出裸 id）；②嵌入式 token（note 裡 `prefixfact-x` 這種單字內夾 id——ASCII 邊界視為字內不動，但 raw substring 掃描器看得到）——要先定義「禁 token」還是「禁任何 substring」，再做最終 leak detector，不可用 naive 固定點替換（會循環）；③case note 的 $ 全族測試。
 - CLI 未知旗標靜默吞（critic 二輪實測：`all --model gpt-x` 被忽略照跑）：parseArgs 收下未知旗標而無人讀——加白名單拒絕或至少警告；matrix 格 re-report（`report --out <cell>`）的覆寫旗標豁免依賴 `__matrixCell`，獨立重出格子的路徑仍待修（既有「report --out 相對路徑」待修項同區）。「引擎版本與鎖定時不同」旗標目前不進 page.html 的試跑口徑計數（措辭是「與鎖定時不同」）——跨版本重跑要不要在給人看的一頁標記，待維護者裁。
+- **核可頁作為標準流程太複雜**（維護者 2026-08-21，第一次完整走過三問核可流程後的回饋）：三問優先版型方向對，但整頁（三問＋量測概覽＋自檢＋條件＋題組全文＋檢查項＋觸發＋成本＋預先登錄全文）對「每次量測都要走一遍」的流程太重。候選方向（跟著 talk-gate 與組員試用的 dogfood 一起迭代，先觀察大家實際展開哪些深究段再裁）：①深究區預設摺疊（`<details>`）或拆成第二個檔案，核可頁本體＝三問＋成本＋說可以、一屏內；②AI 對話話術只帶三問卡；③「熟手模式」——重測（同題組 relock）時只出差異與三問。
 - Windows 上的引擎實跑（程式寫了 `shell:true` 與 `--root`，還沒在 Windows 跑過）；MCP 的已知答案題。
 - 成本硬上限（`--max-cost-usd` 那種：撞到就中止並報部分結果）。
 
