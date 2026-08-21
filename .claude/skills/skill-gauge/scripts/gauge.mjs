@@ -103,35 +103,63 @@ function ancestorsWithClaude(dir) {
 // （2026-08-21 usage-detection probe：copyDir 只搬 skill 資料夾）。
 function detectPluginContext(skillAbs) {
   if (!skillAbs) return null;
+  // walk-up 含 skill 資料夾自身（skill 資料夾本身就是外掛根的布局也認得；R1-4）。
+  // 純字面路徑、不解 symlink（引擎全站慣例）：skill 根是 symlink、實體在外掛內的布局偵測不到，屬已知限制。
   let pluginRoot = null;
   let d = path.resolve(skillAbs);
-  let parent = path.dirname(d);
-  while (parent !== d) {
+  while (true) {
     // 主鍵是 .claude-plugin/plugin.json；只有 marketplace.json 的是 marketplace 根、不是外掛本體
-    if (fs.existsSync(path.join(parent, '.claude-plugin', 'plugin.json'))) { pluginRoot = parent; break; }
-    d = parent; parent = path.dirname(d);
+    if (fs.existsSync(path.join(d, '.claude-plugin', 'plugin.json'))) { pluginRoot = d; break; }
+    const parent = path.dirname(d);
+    if (parent === d) break;
+    d = parent;
   }
   let manifestRaw = null;
   if (pluginRoot) { try { manifestRaw = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8')); } catch { manifestRaw = null; } }
-  const hasHooks = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, 'hooks', 'hooks.json')) || manifestRaw?.hooks != null);
-  const hasMcp = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, '.mcp.json')) || manifestRaw?.mcpServers != null);
-  const mcpRefs = new Set();
-  const scan = (dir) => {
-    let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isSymbolicLink()) continue;
-      if (e.isDirectory()) { scan(p); continue; }
-      if (!e.name.toLowerCase().endsWith('.md')) continue;
-      try {
-        if (fs.statSync(p).size > 512 * 1024) continue; // refs 是加分訊號，超大檔跳過不報錯
-        for (const m of fs.readFileSync(p, 'utf8').matchAll(/\bmcp__[A-Za-z0-9_-]+/g)) mcpRefs.add(m[0]);
-      } catch { /* 讀不到就跳過 */ }
+  const isObjManifest = !!manifestRaw && typeof manifestRaw === 'object' && !Array.isArray(manifestRaw);
+  // manifest「有 key」就算命中（R1-3：{"hooks": null} 也算宣告了 hooks），檔案 marker 與 key 二擇一
+  const hasHooks = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, 'hooks', 'hooks.json')) || (isObjManifest && Object.hasOwn(manifestRaw, 'hooks')));
+  const hasMcp = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, '.mcp.json')) || (isObjManifest && Object.hasOwn(manifestRaw, 'mcpServers')));
+  // skills 範圍三態（R1-2）：true＝skill 在 manifest 宣告的 skills 路徑下；false＝manifest 有宣告但不含它
+  // （共置目錄的痕跡）；null＝manifest 沒宣告或讀不出（不猜預設值，措辭停在「目錄樹下」的證據等級）。
+  let skillsScope = null;
+  if (pluginRoot && isObjManifest && Object.hasOwn(manifestRaw, 'skills') && Array.isArray(manifestRaw.skills)) {
+    const entries = manifestRaw.skills.filter((x) => typeof x === 'string' && x.trim());
+    if (entries.length) {
+      const skillReal = path.resolve(skillAbs);
+      skillsScope = entries.some((e) => { const root = path.resolve(pluginRoot, e); return skillReal === root || skillReal.startsWith(root + path.sep); });
     }
-  };
-  scan(path.resolve(skillAbs));
+  }
+  // mcp__ 引用掃描：迭代（不遞迴，避免深樹爆 stack）＋三重上限（R1-5）；超限記 scanTruncated，
+  // 不靜默——refs 只當「有」的證據用，缺漏不影響任何「沒有」的宣稱。
+  const mcpRefs = new Set();
+  let scanTruncated = false;
+  try {
+    const MAX_FILES = 200, MAX_BYTES = 5 * 1024 * 1024, MAX_DEPTH = 12, MAX_FILE = 512 * 1024;
+    let files = 0, bytes = 0;
+    const stack = [[path.resolve(skillAbs), 0]];
+    while (stack.length) {
+      if (files > MAX_FILES || bytes > MAX_BYTES) { scanTruncated = true; break; }
+      const [dir, depth] = stack.pop();
+      if (depth > MAX_DEPTH) { scanTruncated = true; continue; }
+      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries) {
+        const pth = path.join(dir, e.name);
+        if (e.isSymbolicLink()) continue;
+        if (e.isDirectory()) { stack.push([pth, depth + 1]); continue; }
+        if (!e.name.toLowerCase().endsWith('.md')) continue;
+        if (++files > MAX_FILES) { scanTruncated = true; break; }
+        try {
+          const size = fs.statSync(pth).size;
+          if (size > MAX_FILE) { scanTruncated = true; continue; }
+          if ((bytes += size) > MAX_BYTES) { scanTruncated = true; break; }
+          for (const m of fs.readFileSync(pth, 'utf8').matchAll(/\bmcp__[A-Za-z0-9_-]+/g)) mcpRefs.add(m[0]);
+        } catch { /* 讀不到就跳過 */ }
+      }
+    }
+  } catch { scanTruncated = true; }
   if (!pluginRoot && mcpRefs.size === 0) return null;
-  return { pluginRoot, manifest: manifestRaw ? { name: manifestRaw.name ?? null, version: manifestRaw.version ?? null } : null, hasHooks, hasMcp, mcpRefs: [...mcpRefs].sort() };
+  return { pluginRoot, manifest: manifestRaw ? { name: manifestRaw.name ?? null, version: manifestRaw.version ?? null } : null, hasHooks, hasMcp, skillsScope, mcpRefs: [...mcpRefs].sort(), scanTruncated };
 }
 
 function defaultRoot() {
@@ -1213,17 +1241,34 @@ const BOUNDARY_SAY = '上面的描述性數字，而且只限這次的條件';
 const BOUNDARY_NOT_SAY = '因果通則、外推到題組之外的任務、跨模型比較';
 
 // 外掛揭露句（接在【邊界】行尾）：report.subjectPlugin 由 loadConfig 的 detectPluginContext 而來。
-// 舊報告（無此欄位）回空字串——邊界行與 1.2.0 逐字相同，重出不改寫歷史。
+// 舊報告（無此欄位）回空字串——`html` 重出走儲存的 decisionFirst，邊界行與 1.2.0 逐字相同；
+// `report` 是重算指令，輸出屬現行引擎（R1-1：保真宣稱只涵蓋 html，不涵蓋 report 重算）。
+// 措辭停在證據等級（R1-2）：偵測只證明「祖先目錄樹有外掛 manifest」；skillsScope 三態決定說多滿。
+function cleanPluginName(x) {
+  if (typeof x !== 'string') return null;
+  const t = x.trim();
+  // 單行、可列印、長度上限——manifest 是外來 JSON，name 直接進 report.md 行內，不消毒會被注入換行／假結論（R1-6）
+  if (!t || t.length > 80 || /[\u0000-\u001f\u007f]/.test(t)) return null;
+  return t;
+}
 function pluginBoundaryNote(r) {
   const p = r?.subjectPlugin;
   if (!p) return '';
   const parts = [];
   if (p.pluginRoot) {
-    const who = p.manifest?.name ? `外掛 ${p.manifest.name}` : '一個外掛';
+    const nm = cleanPluginName(p.manifest?.name);
+    const who = nm ? `外掛 ${nm} ` : '一個外掛'; // 英文名後帶空格：接「的一部分」「的目錄樹下」時保持中英間距
     const payload = [p.hasHooks ? 'hook' : null, p.hasMcp ? 'MCP' : null].filter(Boolean).join('／');
-    parts.push(payload
-      ? `受測 skill 隸屬${who}（偵測到 ${payload} 設定）：隔離環境只複製 skill 資料夾，外掛的 hook 與 MCP 不會跟著進去，兩組都拿不到——skill 的效果若依賴它們，這份量測會低估甚至測不到（兩組一起變差，讀起來像「沒差」）`
-      : `受測 skill 隸屬${who}（未偵測到 hook／MCP 設定檔）：量測只涵蓋 skill 資料夾本身，外掛層的其他能力不在範圍內`);
+    const where = p.skillsScope === true ? `是${who}的一部分（在它宣告的 skills 範圍內）`
+      : p.skillsScope === false ? `位於${who}的目錄樹下，但不在它宣告的 skills 範圍內（可能只是同倉共置）`
+      : `位於${who}的目錄樹下`;
+    if (payload && p.skillsScope !== false) {
+      parts.push(`受測 skill ${where}，該外掛帶 ${payload} 設定：隔離環境只複製 skill 資料夾，外掛的 hook 與 MCP 不會跟著進去，兩組都拿不到——skill 的效果若依賴它們，這份量測會低估甚至測不到（兩組一起變差，讀起來像「沒差」）`);
+    } else if (payload) {
+      parts.push(`受測 skill ${where}；該目錄樹帶 ${payload} 設定，但證據只到「同一目錄樹」為止——若這個 skill 實際依賴使用者環境的 hook／MCP，隔離環境兩組都拿不到，效果會被低估`);
+    } else {
+      parts.push(`受測 skill ${where}（未偵測到 hook／MCP 設定檔）：量測只涵蓋 skill 資料夾本身，外掛層的其他能力不在範圍內`);
+    }
   }
   if (p.mcpRefs?.length) {
     const shown = p.mcpRefs.slice(0, 5).join('、') + (p.mcpRefs.length > 5 ? ` 等共 ${p.mcpRefs.length} 個` : '');
@@ -1231,13 +1276,16 @@ function pluginBoundaryNote(r) {
   }
   return parts.length ? `另外，${parts.join('；')}。` : '';
 }
-// STOP（停案）時的低估警語條件：外掛帶 hook／MCP 設定、或 skill 內文引用 MCP 工具——
-// 這正是 probe 指認的誤判形態（兩臂趨同 → 誤下「沒必要」）。
+// STOP（停案）時的低估警語：外掛帶 hook／MCP 設定（且 skill 不是明確範圍外）、或 skill 內文引用 MCP 工具——
+// 這正是 probe 指認的誤判形態（兩臂趨同 → 誤下「沒必要」）。句子按實際 signal 組（R1-8）。
 function pluginStopCaveat(r) {
   const p = r?.subjectPlugin;
   if (!p) return '';
-  const risky = (p.pluginRoot && (p.hasHooks || p.hasMcp)) || (p.mcpRefs?.length > 0);
-  return risky ? '（受測 skill 帶有外掛 hook／MCP 脈絡，它們沒進隔離環境——「沒必要」可能是低估的誤判，詳見【邊界】）' : '';
+  const pluginRisk = !!(p.pluginRoot && (p.hasHooks || p.hasMcp) && p.skillsScope !== false);
+  const refRisk = (p.mcpRefs?.length || 0) > 0;
+  if (!pluginRisk && !refRisk) return '';
+  const src = [pluginRisk ? '外掛層的 hook／MCP 設定' : null, refRisk ? 'skill 內文引用的 MCP 工具' : null].filter(Boolean).join('與');
+  return `（${src}沒進隔離環境——「沒必要」可能是低估的誤判，詳見【邊界】）`;
 }
 const pct = (p) => (p == null ? null : Math.round(p * 100));
 // 全對率的分母（場景全對制）：有效 run＝全對＋有效但未成功。前置作廢與無法判定都不進分母。

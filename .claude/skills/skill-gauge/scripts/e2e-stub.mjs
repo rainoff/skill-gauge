@@ -124,8 +124,20 @@ const outB = path.join(work, 'out-baseline');
 r = run(['baseline', '--config', CFG, '--out', outB, '--runs', '1']);
 t('baseline 模式可跑', r.code === 0 && fs.existsSync(path.join(outB, 'report.json')), r.out.slice(-400));
 
-// 9. 外掛揭露（1.2.1）：fixture 包進外掛結構 → 邊界句出現；帶 payload 的停案結論出低估警語；陰性＝第一個 fixture 不出外掛句
+// 9. 外掛揭露（1.2.1＋R1 修正）：fixture 包進外掛結構 → 邊界句（證據級措辭）；帶 payload 的停案結論出低估警語；
+//    陰性＝第一個 fixture 不出外掛句；R1-1＝html 重出走儲存行、1.2.0 形態逐字保真
 t('外掛揭露（陰性）：非外掛 fixture 的邊界行不出現外掛句', !/外掛/.test((rep?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
+{
+  // R1-1：把現成 report.json 削成 1.2.0 形態（刪 subjectPlugin），用 render CLI 重出 → 邊界行逐字不變
+  const repOld = readJ(path.join(outAll, 'report.json'));
+  delete repOld.subjectPlugin;
+  const oldJ = path.join(work, 'old-style-report.json'); fs.writeFileSync(oldJ, JSON.stringify(repOld));
+  const oldH = path.join(work, 'old-style-report.html');
+  const rr = spawnSync(process.execPath, [path.join(here, 'render.mjs'), oldJ, oldH], { encoding: 'utf8' });
+  const oldBoundary = (repOld.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || '';
+  const oldHtml = fs.existsSync(oldH) ? fs.readFileSync(oldH, 'utf8') : '';
+  t('外掛揭露（R1-1）：1.2.0 形態 report.json 經 html 重出，儲存的邊界行原樣出現、無外掛句', rr.status === 0 && oldBoundary.endsWith('不反映多 skill 併存時的觸發表現。') && oldHtml.includes(oldBoundary) && !/另外，受測 skill/.test(oldHtml));
+}
 const fx2 = path.join(work, 'fixture-plugin');
 fs.cpSync(FIXTURE, fx2, { recursive: true });
 const CFG2 = path.join(fx2, 'gauge', 'gauge.json');
@@ -142,9 +154,9 @@ const outP = path.join(work, 'out-plugin');
 rp = run(['all', '--config', CFG2, '--out', outP, '--runs', '1']);
 t('外掛揭露：all 跑完（exit 0）', rp.code === 0, rp.out.slice(-400));
 const repP = fs.existsSync(path.join(outP, 'report.json')) ? readJ(path.join(outP, 'report.json')) : null;
-t('外掛揭露：report.json 記 subjectPlugin（root＋hooks＋MCP）', repP?.subjectPlugin?.pluginRoot?.endsWith('fixture-plugin') === true && repP.subjectPlugin.hasHooks === true && repP.subjectPlugin.hasMcp === true, JSON.stringify(repP?.subjectPlugin));
-t('外掛揭露：決策摘要邊界行含外掛句（低估甚至測不到）', /另外，受測 skill 隸屬外掛 fixture-plugin/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || '') && /低估甚至測不到/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
-t('外掛揭露：report.md 也含同一句', fs.existsSync(path.join(outP, 'report.md')) && /隸屬外掛 fixture-plugin/.test(fs.readFileSync(path.join(outP, 'report.md'), 'utf8')));
+t('外掛揭露：report.json 記 subjectPlugin（root＋hooks＋MCP＋scope=null 無 skills 宣告）', repP?.subjectPlugin?.pluginRoot?.endsWith('fixture-plugin') === true && repP.subjectPlugin.hasHooks === true && repP.subjectPlugin.hasMcp === true && repP.subjectPlugin.skillsScope === null, JSON.stringify(repP?.subjectPlugin));
+t('外掛揭露：決策摘要邊界行含證據級外掛句（位於…目錄樹下＋低估甚至測不到）', /另外，受測 skill 位於外掛 fixture-plugin 的目錄樹下/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || '') && /低估甚至測不到/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
+t('外掛揭露：report.md 也含同一句', fs.existsSync(path.join(outP, 'report.md')) && /位於外掛 fixture-plugin 的目錄樹下/.test(fs.readFileSync(path.join(outP, 'report.md'), 'utf8')));
 const outPS = path.join(work, 'out-plugin-stop');
 const rps = spawnSync(process.execPath, [ENGINE, 'all', '--config', CFG2, '--out', outPS, '--runs', '1', '--root', root], { env: { ...env, GAUGE_STUB_MODE: 'perfect-baseline' }, encoding: 'utf8' });
 const repPS = fs.existsSync(path.join(outPS, 'report.json')) ? readJ(path.join(outPS, 'report.json')) : null;

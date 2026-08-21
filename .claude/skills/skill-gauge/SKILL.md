@@ -12,7 +12,7 @@ description: 幫使用者量測一個 AI skill 到底有沒有用（skill-gauge 
 
 - 找模板：repo 根目錄 `templates/`（pre-registration／case／results）。找不到（本 skill 被複製到別處）就用文末「精簡欄位表」，並告訴使用者。
 - 找受測 skill：要一個**含 SKILL.md 的資料夾路徑**。記名稱、版本快照（commit 或日期）。
-- **認受測物的型態**（v1 只量 skill 資料夾）：往上層找 `.claude-plugin/plugin.json`（隸屬外掛）、看內文有沒有引用 `mcp__` 工具或依賴 hook——有任一項就先直說：隔離環境只複製 skill 資料夾，外掛的 hook／MCP 不隨行，兩組一起缺，效果會低估甚至趨同。使用者仍要量就繼續；引擎會自動偵測、把這件事寫進報告【邊界】（帶這類設定的停案結論會加低估警語），你在 results 的限制段照抄。
+- **認受測物的型態**（v1 只量 skill 資料夾）：skill 資料夾（含自身）往上有 `.claude-plugin/plugin.json`、內文出現 `mcp__` 工具字樣、或使用者說它依賴 hook／MCP——有任一項就先直說：隔離環境只複製 skill 資料夾，外掛的 hook／MCP 不隨行，兩組一起缺，效果會低估甚至趨同。引擎的自動偵測只涵蓋三種**寫在檔案裡的痕跡**：祖先目錄的外掛 manifest（含 skills 範圍比對）、外掛根的標準 hook／MCP 設定檔（`hooks/hooks.json`、`.mcp.json`、manifest 對應 key）、skill 內文 `.md` 檔字面的 `mcp__` 引用；沒寫進檔案的依賴偵測不到，靠這一步問使用者、寫進 results 的限制段。偵測到的會自動寫進報告【邊界】，帶 hook／MCP 痕跡的停案結論會加低估警語。
 - **還沒寫 skill、只是想知道該不該寫？** 一樣走六問（翻車案例照給），gauge.json 不填 skill，第 4 步改跑 `baseline`：只量不帶 skill 的模型做不做得到、穩不穩。答案是「不用寫」或「值得寫，而且知道要補哪幾條」——這是 skill-forge「先確認不帶 skill 真的過不了」那條鐵律，我們把它做成量測的前段。
 - 你可以讀受測 skill：用來理解它做什麼、抄下它**宣稱會做到的事**（第 2 步的第二來源）；**不把它規定的格式當計分項**——格式類照抄進評分，兩組會全過、分不出差別（這套方法第一版就是這樣死的），那些放前置檢查。
 - 執行環境：`claude --version` 有回應＋`node --version` ≥ 18 才能自動跑；沒有的話走第 4 步的手動路。

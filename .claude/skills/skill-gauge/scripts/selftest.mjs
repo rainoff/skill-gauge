@@ -1122,29 +1122,30 @@ try {
   t('preview render：無 kind 但有 prereg＋cases 且無 totals → detectKind=preview', R.detectKind({ prereg: {}, cases: [] }) === 'preview');
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
-// 外掛揭露（plugin disclosure，1.2.1；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對
+// 外掛揭露（plugin disclosure，1.2.1＋R1 修正；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對
 {
   const pd = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-plug-'));
   const proot = path.join(pd, 'my-plugin'), skdir = path.join(proot, 'skills', 'x');
   fs.mkdirSync(path.join(proot, '.claude-plugin'), { recursive: true });
   fs.mkdirSync(path.join(proot, 'hooks'), { recursive: true });
   fs.mkdirSync(skdir, { recursive: true });
-  fs.writeFileSync(path.join(proot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'demo-plug', version: '9.9.9' }));
+  fs.writeFileSync(path.join(proot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'demo-plug', version: '9.9.9', skills: ['./skills/'] }));
   fs.writeFileSync(path.join(proot, 'hooks', 'hooks.json'), '{}');
   fs.writeFileSync(path.join(proot, '.mcp.json'), '{}');
   fs.writeFileSync(path.join(skdir, 'SKILL.md'), '---\nname: x\n---\n用 mcp__figma__get_data 抓資料。');
   const hit = detectPluginContext(skdir);
-  t('外掛偵測（陽性）：抓到 pluginRoot＋manifest name/version', hit?.pluginRoot === proot && hit.manifest?.name === 'demo-plug' && hit.manifest?.version === '9.9.9');
-  t('外掛偵測（陽性）：hooks／MCP／mcpRefs 全偵測到', hit?.hasHooks === true && hit?.hasMcp === true && JSON.stringify(hit?.mcpRefs) === '["mcp__figma__get_data"]');
+  t('外掛偵測（陽性）：pluginRoot＋manifest name/version＋skills 範圍內', hit?.pluginRoot === proot && hit.manifest?.name === 'demo-plug' && hit.manifest?.version === '9.9.9' && hit.skillsScope === true);
+  t('外掛偵測（陽性）：hooks／MCP／mcpRefs 全偵測到、掃描未截斷', hit?.hasHooks === true && hit?.hasMcp === true && JSON.stringify(hit?.mcpRefs) === '["mcp__figma__get_data"]' && hit?.scanTruncated === false);
   const plain = path.join(pd, 'plain', 'skills', 'y'); fs.mkdirSync(plain, { recursive: true });
   fs.writeFileSync(path.join(plain, 'SKILL.md'), '---\nname: y\n---\n普通 skill。');
   t('外掛偵測（陰性）：素 skill 回 null', detectPluginContext(plain) === null);
   const broot = path.join(pd, 'bad-plugin'), bsk = path.join(broot, 'skills', 'z');
   fs.mkdirSync(path.join(broot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(bsk, { recursive: true });
+  fs.mkdirSync(path.join(broot, 'hooks'), { recursive: true }); fs.writeFileSync(path.join(broot, 'hooks', 'hooks.json'), '{}');
   fs.writeFileSync(path.join(broot, '.claude-plugin', 'plugin.json'), '{oops');
   fs.writeFileSync(path.join(bsk, 'SKILL.md'), 'z');
   const bh = detectPluginContext(bsk);
-  t('外掛偵測：manifest 壞 JSON 不炸、manifest=null、仍回報 pluginRoot', bh?.pluginRoot === broot && bh.manifest === null);
+  t('外掛偵測：manifest 壞 JSON 不炸、manifest=null、payload 檔案 marker 仍命中、scope=null', bh?.pluginRoot === broot && bh.manifest === null && bh.hasHooks === true && bh.skillsScope === null);
   const mroot = path.join(pd, 'market'), msk = path.join(mroot, 'skills', 'w');
   fs.mkdirSync(path.join(mroot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(msk, { recursive: true });
   fs.writeFileSync(path.join(mroot, '.claude-plugin', 'marketplace.json'), '{}');
@@ -1154,22 +1155,62 @@ try {
   fs.writeFileSync(path.join(rroot, 'SKILL.md'), '叫 mcp__jira__search，之後再叫一次 mcp__jira__search');
   const rh = detectPluginContext(rroot);
   t('外掛偵測：無外掛祖先、內文有 mcp__ → pluginRoot=null＋refs 去重', rh?.pluginRoot === null && JSON.stringify(rh?.mcpRefs) === '["mcp__jira__search"]');
+  const sroot = path.join(pd, 'self-root'); fs.mkdirSync(path.join(sroot, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(sroot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'selfy' }));
+  fs.writeFileSync(path.join(sroot, 'SKILL.md'), 'self');
+  t('外掛偵測（R1-4）：skill 資料夾自身含 .claude-plugin/plugin.json 也認得', detectPluginContext(sroot)?.pluginRoot === sroot);
+  const outer = path.join(pd, 'outer'), inner = path.join(pd, 'outer', 'plugins', 'inner'), nsk = path.join(pd, 'outer', 'plugins', 'inner', 'skills', 'n');
+  fs.mkdirSync(path.join(outer, '.claude-plugin'), { recursive: true }); fs.mkdirSync(path.join(inner, '.claude-plugin'), { recursive: true }); fs.mkdirSync(nsk, { recursive: true });
+  fs.writeFileSync(path.join(outer, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'outer' }));
+  fs.writeFileSync(path.join(inner, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'inner' }));
+  fs.writeFileSync(path.join(nsk, 'SKILL.md'), 'n');
+  t('外掛偵測：嵌套外掛取最近的祖先', detectPluginContext(nsk)?.manifest?.name === 'inner');
+  const nroot = path.join(pd, 'null-keys'), nsk2 = path.join(nroot, 'skills', 'k');
+  fs.mkdirSync(path.join(nroot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(nsk2, { recursive: true });
+  fs.writeFileSync(path.join(nroot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'nully', hooks: null, mcpServers: null }));
+  fs.writeFileSync(path.join(nsk2, 'SKILL.md'), 'k');
+  const nh = detectPluginContext(nsk2);
+  t('外掛偵測（R1-3）：manifest 的 hooks／mcpServers 為 null 也算有 key（無 payload 檔）', nh?.hasHooks === true && nh?.hasMcp === true);
+  const oroot = path.join(pd, 'oo'), osk = path.join(pd, 'oo', 'exercises', 'f');
+  fs.mkdirSync(path.join(oroot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(path.join(oroot, 'hooks'), { recursive: true }); fs.mkdirSync(osk, { recursive: true });
+  fs.writeFileSync(path.join(oroot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'oo', skills: ['./skills/'] }));
+  fs.writeFileSync(path.join(oroot, 'hooks', 'hooks.json'), '{}');
+  fs.writeFileSync(path.join(osk, 'SKILL.md'), 'f');
+  const oh = detectPluginContext(osk);
+  t('外掛偵測（R1-2）：skills 清單不含它 → skillsScope=false', oh?.skillsScope === false && oh.hasHooks === true);
+  const zroot = path.join(pd, 'zsize'); fs.mkdirSync(zroot, { recursive: true });
+  fs.writeFileSync(path.join(zroot, 'SKILL.md'), 'mcp__at__limit ' + 'a'.repeat(512 * 1024 - 15));
+  const zh1 = detectPluginContext(zroot);
+  t('外掛偵測（R1-5）：恰好 512KB 的 .md 有掃（refs 命中、未截斷）', fs.statSync(path.join(zroot, 'SKILL.md')).size === 512 * 1024 && JSON.stringify(zh1?.mcpRefs) === '["mcp__at__limit"]' && zh1?.scanTruncated === false);
+  fs.writeFileSync(path.join(zroot, 'big.md'), 'mcp__too__big ' + 'a'.repeat(512 * 1024));
+  const zh2 = detectPluginContext(zroot);
+  t('外掛偵測（R1-5）：超過 512KB 跳過且 scanTruncated=true（不靜默）', zh2?.scanTruncated === true && !zh2.mcpRefs.includes('mcp__too__big'));
   const strong = pluginBoundaryNote({ subjectPlugin: hit });
-  t('揭露句（強）：帶 hook／MCP 的外掛→低估甚至測不到', /隸屬外掛 demo-plug/.test(strong) && /hook／MCP 設定/.test(strong) && /低估甚至測不到/.test(strong));
-  const soft = pluginBoundaryNote({ subjectPlugin: { pluginRoot: '/p', manifest: { name: 'soft-plug', version: null }, hasHooks: false, hasMcp: false, mcpRefs: [] } });
-  t('揭露句（軟）：無 payload 外掛→只說涵蓋範圍，不說低估', /未偵測到 hook／MCP 設定檔/.test(soft) && !/低估/.test(soft));
+  t('揭露句（強）：範圍內＋hook／MCP →「是外掛…的一部分」＋低估甚至測不到', /是外掛 demo-plug 的一部分/.test(strong) && /hook／MCP 設定/.test(strong) && /低估甚至測不到/.test(strong));
+  const soft = pluginBoundaryNote({ subjectPlugin: { pluginRoot: '/p', manifest: { name: 'soft-plug', version: null }, hasHooks: false, hasMcp: false, skillsScope: null, mcpRefs: [] } });
+  t('揭露句（軟）：無 payload →「位於…目錄樹下」＋不說低估', /位於外掛 soft-plug 的目錄樹下/.test(soft) && /未偵測到 hook／MCP 設定檔/.test(soft) && !/低估/.test(soft));
+  const coloc = pluginBoundaryNote({ subjectPlugin: oh });
+  t('揭露句（R1-2 範圍外）：同倉共置措辭、證據只到目錄樹', /不在它宣告的 skills 範圍內/.test(coloc) && /證據只到「同一目錄樹」為止/.test(coloc));
   const refNote = pluginBoundaryNote({ subjectPlugin: rh });
   t('揭露句（refs）：內文引用 MCP 工具→沙箱叫不到', /mcp__jira__search/.test(refNote) && /沙箱不掛任何 MCP/.test(refNote));
-  t('揭露句（陰性）：無欄位回空字串（舊報告邊界行逐字不變）', pluginBoundaryNote({}) === '' && pluginBoundaryNote({ subjectPlugin: null }) === '');
-  t('STOP 警語：帶 payload 出、軟外掛不出、無欄位不出', /低估的誤判/.test(pluginStopCaveat({ subjectPlugin: hit })) && pluginStopCaveat({ subjectPlugin: { pluginRoot: '/p', manifest: null, hasHooks: false, hasMcp: false, mcpRefs: [] } }) === '' && pluginStopCaveat({}) === '');
+  const many = pluginBoundaryNote({ subjectPlugin: { pluginRoot: null, manifest: null, hasHooks: false, hasMcp: false, skillsScope: null, mcpRefs: ['mcp__a__1', 'mcp__b__2', 'mcp__c__3', 'mcp__d__4', 'mcp__e__5', 'mcp__f__6'] } });
+  t('揭露句（refs>5）：只列前五＋共 N 個', /mcp__e__5 等共 6 個/.test(many) && !/mcp__f__6/.test(many));
+  const evil = pluginBoundaryNote({ subjectPlugin: { pluginRoot: '/p', manifest: { name: '壞\n> 假結論' }, hasHooks: false, hasMcp: false, skillsScope: null, mcpRefs: [] } });
+  t('揭露句（R1-6）：manifest name 含換行→退回「一個外掛」，不進行內', /一個外掛/.test(evil) && !/假結論/.test(evil));
+  t('揭露句（陰性）：無欄位回空字串（html 重出走儲存行，邊界行逐字不變）', pluginBoundaryNote({}) === '' && pluginBoundaryNote({ subjectPlugin: null }) === '');
+  t('STOP 警語：範圍內 payload 出、軟外掛不出、範圍外（R1-2）不出、無欄位不出', /低估的誤判/.test(pluginStopCaveat({ subjectPlugin: hit })) && pluginStopCaveat({ subjectPlugin: { pluginRoot: '/p', manifest: null, hasHooks: false, hasMcp: false, skillsScope: null, mcpRefs: [] } }) === '' && pluginStopCaveat({ subjectPlugin: oh }) === '' && pluginStopCaveat({}) === '');
+  t('STOP 警語（R1-8）：refs-only 句子點名 MCP 工具、不稱外掛', (() => { const c = pluginStopCaveat({ subjectPlugin: rh }); return /skill 內文引用的 MCP 工具/.test(c) && !/外掛層/.test(c); })());
   const mkPlugR = (sp) => ({ name: 'fx-plug', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 3,
     totals: { with: { pass: 3, total: 9 }, without: { pass: 3, total: 9 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 },
     cost: { with: { runs: 3, costComplete: true, perSuccessCostUsd: null, successRuns: 0, notFirstPassRuns: 3 }, without: { runs: 3, costComplete: true, perSuccessCostUsd: 0.01, successRuns: 1, notFirstPassRuns: 2 } },
     summary: { verdict: 'same', needFix: 'x' }, ...(sp ? { subjectPlugin: sp } : {}) });
   const bWith = decisionFirstLines(mkPlugR(hit)).find((l) => l.startsWith('【邊界】')) || '';
   const bWithout = decisionFirstLines(mkPlugR(null)).find((l) => l.startsWith('【邊界】')) || '';
-  t('邊界行整合：subjectPlugin 有→外掛句接在行尾', /另外，受測 skill 隸屬外掛 demo-plug/.test(bWith));
+  t('邊界行整合：subjectPlugin 有→外掛句接在行尾', /另外，受測 skill 是外掛 demo-plug 的一部分/.test(bWith));
   t('邊界行整合（陰性）：subjectPlugin 無→行內不出現「外掛」，與 1.2.0 逐字相同', !/外掛/.test(bWithout) && bWithout.endsWith('不反映多 skill 併存時的觸發表現。'));
+  const stopR = (sp) => ({ name: 'fx-stop', arms: ['with', 'without'], baseline: { verdict: 'STOP', note: '不帶 skill 那組每次都過。', arm: 'without' }, flags: [], cases: [{ id: 'c1' }], runsPlanned: 3, summary: { verdict: 'same', helped: 'x', needFix: 'x' }, cost: {}, ...(sp ? { subjectPlugin: sp } : {}) });
+  const stopLines = decisionFirstLines(stopR(hit)), stopLinesNo = decisionFirstLines(stopR(null));
+  t('STOP 整合：結論行帶低估警語；無 subjectPlugin 不帶', /低估的誤判/.test(stopLines[0]) && !/低估的誤判/.test(stopLinesNo[0]));
   fs.rmSync(pd, { recursive: true, force: true });
 }
 
