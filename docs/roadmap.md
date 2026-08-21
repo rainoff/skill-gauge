@@ -109,7 +109,7 @@ skill-gauge 最終要成為的東西，一句話：**讓使用者（含企業級
 - 取向觀察要不要升格進計分，每一題都要單獨裁決，不能一次套用到全部。
 - 評測鷹架詞，例如「事實包」這類內部用語，不能出現在題目 prompt 裡。這樣才能避免外洩到成品裡。
 
-## 2026-08-19 codex 全包複核留下的待辦（引擎面；分享會前只改文件；審查原稿為內部紀錄，未公開）
+## 2026-08-19 codex 全包複核留下的待辦（引擎面；審查原稿存於維護者私有紀錄 repo，不在本 repo）
 
 - lock 只鎖檔案：`--runs`／`--judge-model`／`--effort`／matrix 的 `--models --efforts` 可在核可後覆寫且核可頁看不到；`baseline`／`trigger`／`describe` 不驗 lock、不做已知答案檢查；`--runs 0` 或非數字沒擋
 - 停案 INCOMPLETE 規則與 SKILL 第 4 步不一致（只在「有效格全過但不完整」才判 INCOMPLETE）；INCOMPLETE 也不停 pipeline

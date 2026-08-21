@@ -116,7 +116,7 @@ function resolveRoot(explicit) {
 }
 
 // Windows：剛結束的子程序對沙箱目錄的 handle 可能還沒放掉，fs.rmSync 會丟 EBUSY 並炸掉整條 pipeline
-// （2026-08-20 win-company 實測：54 次執行跑完、評分中途 rmdir 'D:/sg/sg-grader-...' EBUSY，整批結果差點白跑）。
+// （2026-08-20 Windows 實測：54 次執行跑完、評分中途 rmdir 'D:/sg/sg-grader-...' EBUSY，整批結果差點白跑）。
 // recursive 模式下 node 支援 maxRetries／retryDelay，正是為這情形設計；清不掉也只是留個暫存目錄，不該讓量測失敗，所以最後吞掉並記一行。
 function rmDirSafe(p) {
   try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
