@@ -1319,15 +1319,23 @@ ${pressureHtml}
 // renderMatrixHtml — 多個「模型 × effort」組合
 // ============================================================
 // ---------- 給人看的一頁（v1.3）：renderPersonPageHtml ----------
-// 純格式化：所有數字（含百分比、差額、同率題數、觸發缺口）都由 gauge.mjs 的 personPage 預算好，
-// 這裡不做任何算術，只 esc＋排版（v1.3-R1 MF-7）。缺必要欄位＝誠實缺頁句（S-11），不硬湊。
+// 純格式化：所有會顯示在頁面上的數字（百分比、差額、同率題數、子集題數、觸發缺口）都由 gauge.mjs 的
+// personPage 預算好；這裡不產生新的顯示數字（美元位數對齊等格式化不在此限）（v1.3-R1 MF-7＋R2）。
+// 缺必要欄位或與裁決不一致＝誠實缺頁句（S-11），不硬湊。
 export function renderPersonPageHtml(report, opts = {}) {
   const r = asObj(report);
   const name = nz(txt(r.name)) || '（未命名）';
   const title = txt(opts.title || `${name} — 給人看的一頁`);
   const foot = `<p>這一頁由量測引擎直接從 report.json 產生——不是 AI 現場寫的。工程完整版（每一份產出、評分證據、逐條檢查）在同資料夾的 report.html；拿不到那份檔案的話，向給你這一頁的人要。</p><p>頁面上的每個數字都只描述這一次的條件；換模型、換題目，數字就不是這樣。</p>`;
   const pp = r.personPage;
-  const usable = isObj(pp) && isObj(pp.conclusion) && isObj(pp.successRate) && isObj(pp.boundary);
+  // 深度 guard（S-11＋MF-1 旁路封死）：三欄位不只要是物件，內容也要立得住；裁決是 stop／no-data 時
+  // personPage 必須自己標 available=false——舊引擎或手改出的「stop＋available:true」一律當缺頁，不印比較。
+  const blockedKind = ['stop', 'no-data'].includes(asObj(r.decisionFirstData).verdict?.kind);
+  const srObj = asObj(asObj(pp).successRate);
+  const srOk = srObj.available === false || (isObj(srObj.full) && isObj(srObj.full.with) && num(srObj.full.with.d) !== null);
+  const usable = isObj(pp) && isObj(pp.conclusion) && isObj(pp.successRate) && isObj(pp.boundary)
+    && srOk && (nz(asObj(pp.conclusion).line) || nz(asObj(pp.conclusion).label))
+    && !(blockedKind && srObj.available !== false);
   if (!usable) {
     return page({ title, h1: title, chipsHtml: '', sections: [section('missing', '這一頁出不來', `<p>這份 report.json 沒有「給人看的一頁」需要的完整結構化資料（1.3.0 以前的引擎產的，或欄位缺損）。工程版照常可看（report.html）；要出這一頁，用現行引擎重新量測或重算報告。</p>`, null)], footerHtml: foot });
   }
@@ -1343,7 +1351,7 @@ export function renderPersonPageHtml(report, opts = {}) {
     const full = asObj(sr.full), inf = isObj(sr.informative) ? sr.informative : null;
     const sameN = num(sr.sameRateCases);
     lines.push(`<p><strong>正式讀數（全部情境）：帶 ${esc(cellTxt(full.with))} vs 不帶 ${esc(cellTxt(full.without))}</strong>${sameN ? `（其中 ${esc(txt(sameN))} 個情境兩組同率——貢獻分母、不貢獻差異訊號）` : ''}</p>`);
-    if (inf) lines.push(`<p>診斷視角（事後子集）：只看本次結果兩組率不同的 ${esc(txt(asArr(inf.caseLabels).length))} 個情境——帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}。<em>這個子集是看完結果才挑的，會放大表面差距；只用來指路（哪些情境值得先看），不可當推論或比較的證據——正式判定用上面的全分母。</em></p>`);
+    if (inf) lines.push(`<p>診斷視角（事後子集）：只看本次結果兩組率不同的 ${esc(txt(inf.count ?? asArr(inf.caseLabels).length))} 個情境——帶 ${esc(cellTxt(inf.with))} vs 不帶 ${esc(cellTxt(inf.without))}。<em>這個子集是看完結果才挑的，會放大表面差距；只用來指路（哪些情境值得先看），不可當推論或比較的證據——正式判定用上面的全分母。</em></p>`);
     for (const os of asArr(sr.oneSided)) if (isObj(os)) lines.push(`<p>「${esc(txt(os.label))}」只有 ${esc(txt(os.side))} 這一側的資料——資料不完整，不入比較。</p>`);
     for (const c of asArr(sr.corrections)) {
       if (!isObj(c) || !isObj(c.range)) continue;

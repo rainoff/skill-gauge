@@ -1635,20 +1635,32 @@ function buildPersonPage(r) {
   if (!df || !df.verdict) return null; // 舊報告：頁面走誠實缺頁句
   const dfl = r.decisionFirst || [];
   const pick = (tag) => dfl.find((l) => l.startsWith(tag)) || null;
-  // --- 已知 token 精確替換（MF-6）：assertion id（含 held:）→ label（label 不含其他 id）或 family 白話；case id → 人話標籤 ---
+  // --- 已知 token 精確替換（MF-6＋R2 邊界感知）：assertion id（含 held:）→ label（label 不含其他 id）
+  // 或 family 白話；case id → 人話標籤。替換帶 ASCII 邊界（lookaround）：id 出現在英文單字內部
+  // （例如 id "or" 撞 "workflow"）不動——只換獨立成 token 的出現；CJK 鄰接視為邊界（CJK 不在 guard 字元集）。
+  // 殘餘：id 恰好等於散文裡獨立出現的同形英文字（如獨立的 "or"）仍會被換——那本來就無法與 id 區分，
+  // 出題規範建議 id 帶連字號；此殘餘已記 spec。
   const aIds = Object.keys(r.assertions || {});
   const caseList = (r.cases || []);
-  const caseLabelOf = new Map(caseList.map((c, i) => [c.id, c.note || `情境 ${i + 1}（${TYPE_ZH[c.type] || '一般題'}）`]));
-  const cIds = [...caseLabelOf.keys()];
+  const GUARD = 'A-Za-z0-9_-';
+  const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tokenRe = (id) => new RegExp(`(?<![${GUARD}])${escRe(id)}(?![${GUARD}])`, 'g');
+  const mkSanitizer = (pairs) => { const compiled = pairs.filter(([id]) => id).sort((x, y) => y[0].length - x[0].length).map(([id, rep]) => [tokenRe(id), rep]); return (text) => { let t = String(text ?? ''); for (const [re, rep] of compiled) t = t.replace(re, rep); return t; }; };
+  const cIds = caseList.map((c) => c.id);
   const labelFor = (id) => {
     const a = r.assertions?.[id]; if (!a) return id;
     const lb = a.label;
     const clean = lb && ![...aIds, ...cIds].some((k) => k !== id && String(lb).includes(k)) && !String(lb).includes(id) ? lb : null;
     return clean || FAMILY_ZH[a.family] || '一條檢查';
   };
-  const tokenMap = [...aIds.map((id) => [id, labelFor(id)]), ...cIds.map((id) => [id, caseLabelOf.get(id)])]
-    .sort((x, y) => y[0].length - x[0].length); // 長 token 先換，避免子字串誤傷
-  const sanitize = (text) => { let t = String(text ?? ''); for (const [id, rep] of tokenMap) t = t.split(id).join(rep); return t; };
+  const sanitizeA = mkSanitizer(aIds.map((id) => [id, labelFor(id)]));
+  // case 標籤：note 也要消毒（可能提到別的 id）；先用暫定標籤建 case token 表，再定案
+  const genLabel = (c, i) => `情境 ${i + 1}（${TYPE_ZH[c.type] || '一般題'}）`;
+  const provisional = new Map(caseList.map((c, i) => [c.id, genLabel(c, i)]));
+  const sanitizeC = mkSanitizer([...provisional.entries()]);
+  const caseLabelOf = new Map(caseList.map((c, i) => [c.id, c.note ? sanitizeC(sanitizeA(c.note)) : genLabel(c, i)]));
+  const sanitizeCFinal = mkSanitizer([...caseLabelOf.entries()]);
+  const sanitize = (text) => sanitizeCFinal(sanitizeA(text));
   // --- 比較可用性（MF-1）：停案／資料不足不做任何兩臂彙總 ---
   const blocked = df.verdict.kind === 'stop' || df.verdict.kind === 'no-data';
   let successRate, map = [];
@@ -1671,10 +1683,10 @@ function buildPersonPage(r) {
     const sum = (rs, side) => rs.reduce((a, x) => ({ n: a.n + x[side].n, d: a.d + x[side].d }), { n: 0, d: 0 });
     const full = { with: cellOf(sum(rows, 'with')), without: cellOf(sum(rows, 'without')) };
     // informative＝率不同（交叉相乘，整數安全；MF-2）；這是事後挑選（MF-3），揭露交 renderer 印，選法存 selection
-    const infRows = rows.filter((x) => x.with.n * x.without.d !== x.without.n * x.with.d);
+    const infRows = rows.filter((x) => BigInt(x.with.n) * BigInt(x.without.d) !== BigInt(x.without.n) * BigInt(x.with.d)); // BigInt：交叉積不受浮點 2^53 摺疊（R2）
     const informative = infRows.length ? {
       with: cellOf(sum(infRows, 'with')), without: cellOf(sum(infRows, 'without')),
-      caseLabels: infRows.map((x) => x.label),
+      count: infRows.length, caseLabels: infRows.map((x) => x.label),
       selection: { rule: 'rate-differs-cross-multiplied', postHoc: true },
     } : null;
     const sameRateCases = rows.length - infRows.length;
@@ -1904,7 +1916,12 @@ async function writeHtml(outDir, data, kind) {
   if (kind === 'report' && typeof R.renderPersonPageHtml === 'function') {
     const pp = path.join(outDir, 'page.html');
     try { const tmp = pp + '.tmp'; fs.writeFileSync(tmp, R.renderPersonPageHtml(data, {})); fs.renameSync(tmp, pp); }
-    catch (e) { log(`⚠ page.html 產生失敗（已移除舊檔避免誤讀）：${e?.message || e}`); try { fs.rmSync(pp, { force: true }); fs.rmSync(pp + '.tmp', { force: true }); } catch { /* 清不掉就算了 */ } }
+    catch (e) {
+      // page 是必要產物（S-12／R2）：清掉 stale 後把錯誤丟出去——report.json／report.md 已寫，資料不丟，
+      // 但命令以失敗收場，不讓「頁壞了」躲在 warning 裡。
+      try { fs.rmSync(pp, { force: true }); fs.rmSync(pp + '.tmp', { force: true }); } catch { /* 清不掉就算了 */ }
+      throw new Error(`page.html 產生失敗（舊檔已移除避免誤讀）：${e?.message || e}`);
+    }
   }
   return out;
 }

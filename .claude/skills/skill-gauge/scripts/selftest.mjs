@@ -1297,6 +1297,25 @@ try {
   t('personPage：map 標籤——note 人話、無 note＝「情境 N（題型）」，不回退 id', pp.map[0].label === '塞了假日期的會議紀錄' && pp.map[1].label === '情境 2（乾淨對照題）' && !JSON.stringify(pp.map).includes('case-0'));
   t('personPage（MF-8）：結論自組——不引用環節效益表、帶個位數警語', /可留用——場景全對：帶 5\/6 vs 不帶 3\/6/.test(pp.conclusion.line) && /翻一兩次就會變/.test(pp.conclusion.line) && !/環節效益表/.test(pp.conclusion.line));
   t('personPage（陰性）：無 decisionFirstData 回 null', buildPersonPage({ name: 'old', arms: ['with', 'without'], cases: [] }) === null);
+  // R2：邊界感知替換——短 id 不絞英文散文；獨立出現才換
+  const shortRep = mkRep({ assertions: { or: { family: 'orientation', label: null } }, decisionFirst: ['【結論】x', '【邊界】normal workflow 裡的 or 要看位置。', '【建議·改 skill】看 or'], flags: [], benefit: null });
+  const ppShort = buildPersonPage(shortRep);
+  t('personPage（R2 regression 修復）：id "or" 不動 workflow、獨立 or 才換', (() => { const b = ppShort.boundary.line; return /normal workflow/.test(b) && !/w一條取向觀察kflow/.test(b) && /裡的 一條取向觀察 要看位置/.test(b); })());
+  // R2：case note 藏 id 也要消毒
+  const noteRep = mkRep({ cases: [
+    { id: 'case-01-trap', type: 'trap', note: '這題會踩 fact-aaa', arms: { with: { invalidRuns: 0, validRuns: 3, scenario: { success: 3, notFirstPass: 0 } }, without: { invalidRuns: 0, validRuns: 3, scenario: { success: 1, notFirstPass: 2 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（R2）：note 藏 assertion id → 標籤消毒成 label', (() => { const m = buildPersonPage(noteRep).map[0]; return m.label === '這題會踩 日期不能捏造' && !m.label.includes('fact-aaa'); })());
+  // R2：BigInt 交叉相乘——2^53 摺疊下率差 1 兆分之一也判得出（浮點會誤判同率）
+  const bigRep = mkRep({ cases: [
+    { id: 'case-01-big', type: 'trap', note: 'BIG', arms: { with: { invalidRuns: 0, validRuns: 1, scenario: { success: 100000000, notFirstPass: 1 } }, without: { invalidRuns: 0, validRuns: 1, scenario: { success: 99999999, notFirstPass: 1 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（R2）：BigInt 交叉積——1e8/1e8+1 vs 99999999/1e8 判得出率異（浮點摺疊會漏）', (() => { const sr = buildPersonPage(bigRep).successRate; return sr.informative && sr.informative.count === 1; })());
+  // R2：雙側 gate-false → 區間兩側都展開
+  const dualRep = mkRep({ cases: [
+    { id: 'case-01-d', type: 'trap', note: 'D', arms: { with: { invalidRuns: 1, validRuns: 2, scenario: { success: 2, notFirstPass: 1 } }, without: { invalidRuns: 2, validRuns: 1, scenario: { success: 1, notFirstPass: 2 } } } },
+  ], flags: [], benefit: null });
+  t('personPage（R2）：雙側 gate-false（帶 1、不帶 2）→ 界線 [gap−2, gap＋1]', (() => { const c = buildPersonPage(dualRep).successRate.corrections[0]; return c && c.gap === 1 && c.range.min === -1 && c.range.max === 2; })());
   try {
     const R2 = await import('./render.mjs');
     const rep = mkRep(); rep.personPage = pp;
@@ -1307,6 +1326,8 @@ try {
     t('page render（MF-1）：STOP 頁無「正式讀數」、印停案理由', (() => { const h = R2.renderPersonPageHtml(repStop); return !/正式讀數/.test(h) && /停案/.test(h); })());
     t('page render（S-11）：partial personPage（{}）誠實缺頁；map:[null] 不炸', (() => { const h1 = R2.renderPersonPageHtml({ name: 'x', personPage: {} }); let ok2 = true; try { const rep2 = mkRep(); rep2.personPage = { ...pp, map: [null] }; R2.renderPersonPageHtml(rep2); } catch { ok2 = false; } return /這一頁出不來/.test(h1) && ok2; })());
     t('page render（陰性）：無 personPage → 誠實缺頁句', /這一頁出不來/.test(R2.renderPersonPageHtml({ name: 'old' })));
+    t('page render（R2 MF-1 旁路封死）：裁決 stop＋舊式 available:true → 缺頁，不印正式讀數', (() => { const h = R2.renderPersonPageHtml({ name: 'x', decisionFirstData: { verdict: { kind: 'stop', label: '停案' } }, personPage: { conclusion: { label: '停案', line: 'x' }, successRate: { available: true, full: { with: { n: 1, d: 2, pct: 50 }, without: { n: 0, d: 2, pct: 0 } } }, boundary: { line: 'b' } } }); return /這一頁出不來/.test(h) && !/正式讀數/.test(h); })());
+    t('page render（R2 S-11）：三欄位皆空物件 → 缺頁，不印「— vs —」', (() => { const h = R2.renderPersonPageHtml({ name: 'x', personPage: { conclusion: {}, successRate: {}, boundary: {} } }); return /這一頁出不來/.test(h) && !/正式讀數/.test(h); })());
   } catch (e) { t('page render 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 }
 
