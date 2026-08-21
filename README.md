@@ -70,12 +70,11 @@ git clone https://github.com/rainoff/skill-gauge.git && cd skill-gauge && claude
 
 ## 如何使用
 
-有四種方式：
+有三種方式：
 
 - clone 這個 repo、在裡面開 `claude`（project skill）
 - 把 `.claude/skills/skill-gauge/` 整個資料夾複製到使用者的 `~/.claude/skills/`（引擎跟著走）
-- 當 plugin 裝：`claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
-- `claude plugin marketplace add rainoff/skill-gauge`（遠端 marketplace 形式）——這條還沒實測過
+- 當 plugin 裝：`claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`；marketplace 也可以直接加遠端 repo（`claude plugin marketplace add rainoff/skill-gauge`——這個加法還沒實測過）
 
 ## 沒有 Claude Code 的人
 

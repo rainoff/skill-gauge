@@ -70,12 +70,11 @@ On the same locked task set you can do four more things:
 
 ## How to install
 
-There are four ways — pick one:
+There are three ways — pick one:
 
 - clone this repo and open `claude` inside it (project skill)
 - copy the whole `.claude/skills/skill-gauge/` folder into your `~/.claude/skills/` (the engine travels with it)
-- install as a plugin: `claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
-- `claude plugin marketplace add rainoff/skill-gauge` (remote marketplace form) — not tested yet
+- install as a plugin: `claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`; the marketplace can also be added straight from the remote repo (`claude plugin marketplace add rainoff/skill-gauge` — this variant is not tested yet)
 
 ## Without Claude Code
 
