@@ -62,16 +62,21 @@ On the same locked task set you can do four more things:
 | Thing | Where | What for |
 |---|---|---|
 | **Three templates** | [templates/](templates/) | Task sheet (`case.md`), the contract between you and the executing AI (`pre-registration.md`), results report (`results.md`) |
-| **A real measurement** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | The full chain of one real measurement (sanitized rewrite; original runs and grading evidence are not included, so it can't be replayed verbatim): pre-registration → execution → results. **That run measured a confound, not an effect** — the result went against the repo maintainer's own interest, and every reason is kept as-is; this is where to see what an honest report looks like |
+| **A real measurement** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | The full chain of one real measurement (sanitized rewrite): pre-registration → execution → results |
+
+**That measurement caught a confound, not an effect** — the result went against the repo maintainer's own interest, and every reason is kept as-is; this is where to see what an honest report looks like (original runs and grading evidence are not in the repo, so it can't be replayed verbatim).
+
 | **One exercise** | [exercises/01-meeting-notes-skill.md](exercises/01-meeting-notes-skill.md) | Design a measurement on paper for a fictional skill, no code to run |
 | **Teaching fixture** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | A ten-line meeting-notes skill plus a runnable `gauge.json` (with pressure tasks, 16 trigger tasks, a two-cell matrix). How to run it — including a zero-cost fake-model walkthrough — is in the [fixture guide](exercises/fixtures/meeting-notes/README.md). |
 
 ## How to install
 
-- (a) clone this repo and open `claude` inside it (project skill)
-- (b) copy the whole `.claude/skills/skill-gauge/` folder into your `~/.claude/skills/` (the engine travels with it)
-- (c) install as a plugin: `claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
-- (d) `claude plugin marketplace add rainoff/skill-gauge` (remote marketplace form) — not tested yet.
+There are four ways — pick one:
+
+- clone this repo and open `claude` inside it (project skill)
+- copy the whole `.claude/skills/skill-gauge/` folder into your `~/.claude/skills/` (the engine travels with it)
+- install as a plugin: `claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
+- `claude plugin marketplace add rainoff/skill-gauge` (remote marketplace form) — not tested yet
 
 ## Without Claude Code
 
@@ -89,11 +94,11 @@ Using Cowork / Claude Desktop / Claude.ai: paste the contents of `.claude/skills
 
 The five steps the engine automates:
 
-- a. isolated directory
-- b. three launch flags
-- c. known-answer check
-- d. two-group execution
-- e. blind grading
+- isolated directory
+- three launch flags
+- known-answer check
+- two-group execution
+- blind grading
 
 How to reproduce them by hand, where the method's skeleton comes from, and which designs were absorbed from [skill-forge](https://github.com/neokn/skill-forge) (by Jrting Shiau) — all in [docs/how-it-runs.md](docs/how-it-runs.md).
 

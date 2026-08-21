@@ -62,16 +62,21 @@ git clone https://github.com/rainoff/skill-gauge.git && cd skill-gauge && claude
 | 東西 | 在哪 | 用途 |
 |---|---|---|
 | **模板三份** | [templates/](templates/) | 出題單（`case.md`）、開跑前與執行 AI 的契約（`pre-registration.md`）、結果報告（`results.md`） |
-| **實測範例** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | 一次真實測量的全貌（脫敏轉寫；原始 run 與評分證據不在這裡，不能逐字重跑）：預先登錄 → 執行 → 結果。**該次量到的是變因不是效果**，結果對本 repo 開發者不利，每一條原因照實留著——誠實的報告長什麼樣可以在這裡看到 |
+| **實測範例** | [examples/viz-explain-v2/](examples/viz-explain-v2/) | 一次真實測量的全貌（脫敏轉寫）：預先登錄 → 執行 → 結果 |
 | **練習一題** | [exercises/01-meeting-notes-skill.md](exercises/01-meeting-notes-skill.md) | 紙上為一個虛構 skill 設計測量，不用執行程式 |
+
+實測範例那一次量到的是**變因不是效果**，結果對本 repo 開發者不利，每一條原因照實留著——誠實的報告長什麼樣可以在這裡看到（原始 run 與評分證據不在 repo，不能逐字重跑）。
+
 | **教具** | [exercises/fixtures/meeting-notes/](exercises/fixtures/meeting-notes/) | 一個十行的會議記錄 skill＋一套能直接執行的 `gauge.json`（含壓力題、16 題觸發題、兩格矩陣）。跑法（含免花錢的假模型走法）見[教具說明](exercises/fixtures/meeting-notes/README.md)。 |
 
 ## 如何使用
 
-- (a) clone 這個 repo、在裡面開 `claude`（project skill）
-- (b) 把 `.claude/skills/skill-gauge/` 整個資料夾複製到使用者的 `~/.claude/skills/`（引擎跟著走）
-- (c) 當 plugin 裝：`claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
-- (d) `claude plugin marketplace add rainoff/skill-gauge`（遠端 marketplace 形式）這條還沒實測過。
+有四種方式：
+
+- clone 這個 repo、在裡面開 `claude`（project skill）
+- 把 `.claude/skills/skill-gauge/` 整個資料夾複製到使用者的 `~/.claude/skills/`（引擎跟著走）
+- 當 plugin 裝：`claude plugin marketplace add ./skill-gauge` → `claude plugin install skill-gauge@skill-gauge`
+- `claude plugin marketplace add rainoff/skill-gauge`（遠端 marketplace 形式）——這條還沒實測過
 
 ## 沒有 Claude Code 的人
 
@@ -89,11 +94,11 @@ git clone https://github.com/rainoff/skill-gauge.git && cd skill-gauge && claude
 
 引擎自動做的五步：
 
-- a. 隔離目錄
-- b. 三個開關
-- c. 已知答案檢查
-- d. 兩組執行
-- e. 盲評
+- 隔離目錄
+- 三個開關
+- 已知答案檢查
+- 兩組執行
+- 盲評
 
 手動怎麼照抄、方法骨架從哪裡來、哪些設計吸收自 [skill-forge](https://github.com/neokn/skill-forge)（作者 Jrting Shiau）——都在 [docs/how-it-runs.md](docs/how-it-runs.md)。
 
