@@ -1795,36 +1795,56 @@ function secPreviewIntro(d) {
     asArr(d.arms).length ? chip(`${asArr(d.arms).length} 組`) : null,
     previewLockChip(lock),
   ].filter(Boolean).join('');
-  return section('intro', '先看這裡', p + `<p class="chips">${chips}</p>`);
+  return section('intro', '量測概覽', p + `<p class="chips">${chips}</p>`); // 三問卡才是頁首「先看」，此段讓位（critic 🟡10）
 }
 
-// 三問優先（preview v2，2026-08-21 維護者裁示）：核可那一刻要回答的三個問題（README 定稿句式）放頁首，
-// 每張卡只放回答所需的最小證據＋對應的人工確認（五條自「核可前自檢」上移）；其餘段落降為深究區。
+// 三問優先（preview v2，2026-08-21 維護者裁示；critic 修正輪）：核可那一刻要回答的三個問題（README 定稿
+// 句式）放頁首，每張卡只放回答所需的最小證據＋對應的人工確認（五條自「核可前自檢」上移）。
+// 紀律：臂數等事實由資料驅動不寫死；baseline-only（沒有受測 skill）時洩題卡誠實標不適用；
+// 缺「可說明／無法說明」段或成本估不出來＝⚠ 阻擋項，尾句改口「補齊前不要說可以」；
+// 尾句契約只承諾引擎真的執法的範圍（檔案雜湊；--runs／模型旗標可覆寫、報告會標記）。
 function secPreviewThreeQuestions(d) {
   const cases = asArr(d.cases);
   const checks = asArr(d.checks);
   const checkOf = (id) => asObj(checks.find((c) => asObj(c).id === id));
   const prereg = asObj(d.prereg);
   const cost = asObj(d.cost);
+  const arms = asArr(d.arms);
+  const baselineOnly = d.baselineOnly === true;
+  const blockers = [];
   const confirm = (t) => `<p><strong>☐ ${esc(t)}</strong></p>`;
-  const caseRows = cases.map((c) => { const o = asObj(c); return `<tr><td>${nz(o.note) ? esc(txt(o.note)) : `<code>${esc(txt(o.id))}</code>`}</td><td>${esc(nz(txt(o.typeLabel)) || nz(txt(o.type)) || '—')}</td><td>${String(asArr(o.materials).length)}</td></tr>`; }).join('');
+  const blocked = (t) => { blockers.push(t); return `<p><strong>⚠ ${esc(t)}</strong></p>`; };
   const q1 = `<h3>問題一：題目是否貼合你的使用與失誤情境？</h3>
-${cases.length ? `<table><thead><tr><th>題目</th><th>題型</th><th>材料數</th></tr></thead><tbody>${caseRows}</tbody></table>` : '<p>（還沒有題目）</p>'}
-<p>逐字指令與材料在下面深究區的「題組」段。</p>
+${cases.length
+    ? table(['題目', '題型', '材料數'], cases.map((c) => { const o = asObj(c); return [nz(o.note) ? esc(txt(o.note)) : `<code>${esc(txt(o.id))}</code>`, esc(nz(txt(o.typeLabel)) || nz(txt(o.type)) || '—'), String(asArr(o.materials).length)]; })) + `<p>逐字指令與材料在下面深究區的「題組」段。</p>`
+    : '<p>（還沒有題目——先出題再核可）</p>'}
 ${confirm('確認①：題目來自你的失誤案例或 skill 自己的宣稱，不是憑空想的')}`;
-  const leak = checkOf('prompt-mentions-skill-name');
-  const q2 = `<h3>問題二：對照組拿到的指令有沒有洩題？</h3>
-<p>兩組拿到的是逐字相同的同一份指令，唯一差別是 skill 在不在環境裡。</p>
-${nz(leak.text) ? `<p>引擎自檢：${esc(txt(leak.text))}</p>` : ''}
+  let q2;
+  if (baselineOnly) {
+    q2 = `<h3>問題二：對照組拿到的指令有沒有洩題？</h3>
+<p>這次沒有受測 skill，只量基準組做不做得到——洩題這一題不適用，確認②③免勾。</p>`;
+  } else {
+    const armLine = arms.length >= 3
+      ? `${arms.length} 組拿到的是逐字相同的同一份指令，差別只在環境裡放了什麼（受測 skill／什麼都不放／第三組的替代品）。`
+      : `兩組拿到的是逐字相同的同一份指令，唯一差別是 skill 在不在環境裡。`;
+    const leak = checkOf('prompt-mentions-skill-name');
+    q2 = `<h3>問題二：對照組拿到的指令有沒有洩題？</h3>
+<p>${esc(armLine)}</p>
+${nz(leak.text) ? `<p>引擎自檢：${previewCheckChip(leak.ok)} ${esc(txt(leak.text))}</p>` : ''}
 ${confirm('確認②：共用指令不含 skill 的核心指令詞')}
 ${confirm('確認③：前置檢查兩組都做得到（不是 skill 教的格式）')}`;
+  }
   const sayHtml = nz(prereg.combined) ? mdToHtml(txt(prereg.combined)) : [nz(prereg.say) ? `<h4>可說明</h4>${mdToHtml(txt(prereg.say))}` : '', nz(prereg.notSay) ? `<h4>無法說明</h4>${mdToHtml(txt(prereg.notSay))}` : ''].join('');
   const q3 = `<h3>問題三：可說明／無法說明的條件，你認不認同？</h3>
-${sayHtml || '<p>（預先登錄裡找不到「可說明／無法說明」段——先補齊再核可）</p>'}
-${confirm('確認④：上面「可說明／無法說明」的範圍你同意')}`;
-  const costLine = num(cost.totalCalls) !== null ? `<p>成本：這次估計 ${esc(txt(cost.totalCalls))} 次模型呼叫${num(cost.minCallsIfStop) !== null ? `（停案時最少 ${esc(txt(cost.minCallsIfStop))} 次）` : ''}；細算在深究區「成本估算」段。</p>` : '';
-  const tail = `${costLine}${confirm('確認⑤：這個成本可以接受')}
-<p><strong>三題（加成本）都可以 → 對 AI 說「可以」，它才會鎖定並開跑；之後改了任何一項，要重出核可頁、重新核可。</strong></p>`;
+${sayHtml
+    ? `${sayHtml}\n${confirm('確認④：上面「可說明／無法說明」的範圍你同意')}`
+    : blocked('缺「可說明／無法說明」段——補進 pre-registration.md、重出核可頁後才能核可')}`;
+  const costPart = num(cost.totalCalls) !== null
+    ? `<p>成本：這次估計 ${esc(txt(cost.totalCalls))} 次模型呼叫${num(cost.minCallsIfStop) !== null ? `（停案時最少 ${esc(txt(cost.minCallsIfStop))} 次）` : ''}；細算在深究區「成本估算」段。</p>\n${confirm('確認⑤：這個成本可以接受')}`
+    : blocked('成本估不出來（資料缺）——先確認 gauge.json 的題數／組數／次數，重出核可頁再核可');
+  const tail = `${costPart}
+<p><strong>${blockers.length ? '⚠ 上面有補齊前不能核可的項目——補完、重出核可頁，再說「可以」。' : '適用的確認都成立 → 對 AI 說「可以」，它才會鎖定並開跑。'}</strong></p>
+<p>鎖定涵蓋的是預先登錄、gauge.json、題目、材料、skill 的檔案雜湊——這幾樣改了要重出核可頁、重新核可；執行次數與模型可由指令旗標覆寫，不在鎖定範圍內（與核可不同的覆寫，報告會印警告並標旗標）。</p>`;
   return section('three-questions', '你要回答的三個問題', [q1, q2, q3, tail].join('\n'), '下面各段是深究區——回答這三題不需要逐字讀完，但證據都在。');
 }
 

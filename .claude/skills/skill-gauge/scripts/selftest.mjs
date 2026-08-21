@@ -1120,15 +1120,26 @@ try {
   t('preview render：無外部資源', !/(src|href)=["']https?:\/\//.test(hp) && !/@import\s+url\(/.test(hp));
   t('preview render：detectKind 判成 preview', R.detectKind(minimalPreview) === 'preview');
   t('preview render：無 kind 但有 prereg＋cases 且無 totals → detectKind=preview', R.detectKind({ prereg: {}, cases: [] }) === 'preview');
-  // preview v2（三問優先）：README 定稿句式的三問在頁首、五條人工確認上移、尾句教「說可以」；全頁無「翻車」
-  t('preview v2：三問卡在頁首（README 句式）＋五條上移＋尾句', /你要回答的三個問題/.test(hp) && /題目是否貼合你的使用與失誤情境/.test(hp) && /對照組拿到的指令有沒有洩題/.test(hp) && /可說明／無法說明的條件，你認不認同/.test(hp) && /對 AI 說「可以」/.test(hp) && /五條人工確認（①〜⑤）已上移/.test(hp));
+  // preview v2（三問優先＋critic 修正輪）：三問在頁首（驗位置不只驗存在）、五條上移、退化路徑誠實
+  t('preview v2：三問卡「在頁首」——位置先於「量測概覽」，且 nav 首錨是 three-questions', /你要回答的三個問題/.test(hp) && hp.indexOf('你要回答的三個問題') < hp.indexOf('量測概覽') && /<nav class="nav"><a href="#three-questions">/.test(hp));
+  t('preview v2：README 三問句式＋五條上移說明都在', /題目是否貼合你的使用與失誤情境/.test(hp) && /對照組拿到的指令有沒有洩題/.test(hp) && /可說明／無法說明的條件，你認不認同/.test(hp) && /五條人工確認（①〜⑤）已上移/.test(hp));
   t('preview v2（陰性）：頁面無「翻車」字樣（詞彙已對齊 README 定稿）', !/翻車/.test(hp));
-  const fullPrev = R.renderPreviewHtml({ kind: 'preview', name: 'fx-q', arms: [], conditions: {}, lock: { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] },
+  t('preview v2（critic 🟡5）：minimalPreview 缺 prereg → ⚠ 阻擋句、尾句改口、不出「說可以」通路', /缺「可說明／無法說明」段/.test(hp) && /補完、重出核可頁，再說「可以」/.test(hp) && !/適用的確認都成立/.test(hp));
+  const mkPrev = (over = {}) => ({ kind: 'preview', name: 'fx-q', arms: [{ name: 'with' }, { name: 'without' }], baselineOnly: false, conditions: {}, lock: { state: 'none', lockedAt: null, relocks: 0, engineAtLock: null, diffs: [] },
     cases: [{ id: 'case-01-x', type: 'trap', typeLabel: '陷阱題', note: '塞了假日期', materials: [1], assertions: ['a'] }],
     checks: [{ id: 'prompt-mentions-skill-name', ok: true, text: '題目指令裡沒有出現受測 skill 的名字。' }],
     prereg: { exists: true, path: '/x', markdown: 'x', say: '- 只限這次條件', notSay: '- 因果通則', combined: null },
-    cost: { totalCalls: 42, minCallsIfStop: 30 }, assertions: [], trigger: null, matrix: null }, {});
-  t('preview v2：Q1 題目表（note 白話）＋Q2 引擎自檢句＋Q3 原文＋成本行 42／30', /塞了假日期/.test(fullPrev) && /沒有出現受測 skill 的名字/.test(fullPrev) && /只限這次條件/.test(fullPrev) && /因果通則/.test(fullPrev) && /42 次模型呼叫/.test(fullPrev) && /停案時最少 30 次/.test(fullPrev));
+    cost: { totalCalls: 42, minCallsIfStop: 30 }, assertions: [], trigger: null, matrix: null, ...over });
+  const fullPrev = R.renderPreviewHtml(mkPrev(), {});
+  t('preview v2：Q1 題目表＋Q2 兩組句＋自檢 chip 行＋Q3 原文＋確認④⑤＋成本行＋通行尾句', /塞了假日期/.test(fullPrev) && /兩組拿到的是逐字相同/.test(fullPrev) && /引擎自檢：/.test(fullPrev) && /沒有出現受測 skill 的名字/.test(fullPrev) && /只限這次條件/.test(fullPrev) && /因果通則/.test(fullPrev) && /確認④/.test(fullPrev) && /42 次模型呼叫/.test(fullPrev) && /停案時最少 30 次/.test(fullPrev) && /確認⑤/.test(fullPrev) && /適用的確認都成立/.test(fullPrev));
+  const threeArm = R.renderPreviewHtml(mkPrev({ arms: [{ name: 'with' }, { name: 'without' }, { name: 'reminder' }] }), {});
+  t('preview v2（critic 🔴1）：三組配置——臂數句資料驅動、不出現寫死的「兩組拿到」', /3 組拿到的是逐字相同/.test(threeArm) && !/兩組拿到的是逐字相同/.test(threeArm));
+  const baseOnly = R.renderPreviewHtml(mkPrev({ baselineOnly: true, arms: [{ name: 'baseline' }], checks: [{ id: 'prompt-mentions-skill-name', ok: null, text: '沒有受測 skill，這條不適用。' }] }), {});
+  t('preview v2（critic 🔴2）：baseline-only——洩題卡標不適用、無②③勾選框、無對照組事實句', /只量基準組做不做得到——洩題這一題不適用/.test(baseOnly) && !/☐ 確認②/.test(baseOnly) && !/☐ 確認③/.test(baseOnly) && !/拿到的是逐字相同/.test(baseOnly));
+  const noCost = R.renderPreviewHtml(mkPrev({ cost: {} }), {});
+  t('preview v2（critic 🟡6）：成本估不出來 → ⚠ 阻擋、無 ☐ 確認⑤、尾句改口', /成本估不出來/.test(noCost) && !/☐ 確認⑤/.test(noCost) && !/適用的確認都成立/.test(noCost));
+  const noCases = R.renderPreviewHtml(mkPrev({ cases: [] }), {});
+  t('preview v2（critic nit）：無題目——「先出題再核可」且不出指路句', /還沒有題目——先出題再核可/.test(noCases) && !/深究區的「題組」段/.test(noCases));
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
 
 // 外掛揭露（plugin disclosure，1.2.1＋R1 修正；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對

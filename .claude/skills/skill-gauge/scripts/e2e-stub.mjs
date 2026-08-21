@@ -42,7 +42,8 @@ r = run(['lock', '--config', CFG, '--relock']); t('--relock 成功且留下舊�
   r = run(['preview', '--config', CFG, '--out', outLocked]);
   const htmlLocked = fs.existsSync(outLocked) ? fs.readFileSync(outLocked, 'utf8') : '';
   t('preview（已鎖定）exit 0，提到已鎖定', r.code === 0 && /已鎖定/.test(htmlLocked), r.out.slice(-300));
-  t('preview v2：三問卡在頁首、教具頁無「翻車」', /你要回答的三個問題/.test(htmlLocked) && /題目是否貼合你的使用與失誤情境/.test(htmlLocked) && !/翻車/.test(htmlLocked));
+  t('preview v2：三問卡在頁首（位置先於量測概覽）、教具頁無「翻車」', /你要回答的三個問題/.test(htmlLocked) && htmlLocked.indexOf('你要回答的三個問題') < htmlLocked.indexOf('量測概覽') && !/翻車/.test(htmlLocked));
+  t('preview v2（critic 🔴1）：教具三組——臂數句「3 組」資料驅動、無寫死「兩組拿到」；prereg 齊全走通行尾句', /3 組拿到的是逐字相同/.test(htmlLocked) && !/兩組拿到的是逐字相同/.test(htmlLocked) && /適用的確認都成立/.test(htmlLocked));
   const promptPath = path.join(fx, 'gauge', 'case-01-trap.prompt.md');
   const savedPrompt = fs.readFileSync(promptPath, 'utf8');
   fs.writeFileSync(promptPath, savedPrompt + '\n\n（e2e 測試改動）');
