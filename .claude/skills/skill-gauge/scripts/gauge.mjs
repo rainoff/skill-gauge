@@ -120,29 +120,41 @@ function detectPluginContext(skillAbs) {
   // manifest「有 key」就算命中（R1-3：{"hooks": null} 也算宣告了 hooks），檔案 marker 與 key 二擇一
   const hasHooks = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, 'hooks', 'hooks.json')) || (isObjManifest && Object.hasOwn(manifestRaw, 'hooks')));
   const hasMcp = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, '.mcp.json')) || (isObjManifest && Object.hasOwn(manifestRaw, 'mcpServers')));
-  // skills 範圍三態（R1-2）：true＝skill 在 manifest 宣告的 skills 路徑下；false＝manifest 有宣告但不含它
-  // （共置目錄的痕跡）；null＝manifest 沒宣告或讀不出（不猜預設值，措辭停在「目錄樹下」的證據等級）。
+  // skills 範圍三態（R2 must-fix：語意對齊官方 plugins-reference，2026-08-21 主 session 自驗
+  // https://code.claude.com/docs/en/plugins-reference ）：`skills` 收 string 或 array；自訂路徑須以
+  // './' 開頭（'.' 也合法＝root 本身是單一 skill；條目可直接指向 skill 資料夾）；預設 `skills/`
+  // 永遠在掃描範圍（Adds to the default）。跳脫 pluginRoot 的條目（'./../x'）不算，防偽造範圍。
+  // 三態：true＝在預設 skills/ 或有效自訂條目下；false＝manifest 可讀且兩者皆不含（共置痕跡）；
+  // null＝manifest 不可讀、又不在預設 skills/（自訂條目未知，不猜）。
   let skillsScope = null;
-  if (pluginRoot && isObjManifest && Object.hasOwn(manifestRaw, 'skills') && Array.isArray(manifestRaw.skills)) {
-    const entries = manifestRaw.skills.filter((x) => typeof x === 'string' && x.trim());
-    if (entries.length) {
-      const skillReal = path.resolve(skillAbs);
-      skillsScope = entries.some((e) => { const root = path.resolve(pluginRoot, e); return skillReal === root || skillReal.startsWith(root + path.sep); });
-    }
+  if (pluginRoot) {
+    const skillReal = path.resolve(skillAbs);
+    const within = (root) => skillReal === root || skillReal.startsWith(root + path.sep);
+    const underDefault = within(path.resolve(pluginRoot, 'skills'));
+    const rawEntries = isObjManifest && Object.hasOwn(manifestRaw, 'skills')
+      ? (typeof manifestRaw.skills === 'string' ? [manifestRaw.skills] : Array.isArray(manifestRaw.skills) ? manifestRaw.skills : [])
+      : [];
+    const customRoots = rawEntries
+      .filter((x) => typeof x === 'string' && (x === '.' || x.startsWith('./')))
+      .map((x) => path.resolve(pluginRoot, x))
+      .filter((root) => root === pluginRoot || root.startsWith(pluginRoot + path.sep));
+    if (underDefault || customRoots.some(within)) skillsScope = true;
+    else if (isObjManifest) skillsScope = false;
   }
   // mcp__ 引用掃描：迭代（不遞迴，避免深樹爆 stack）＋三重上限（R1-5）；超限記 scanTruncated，
   // 不靜默——refs 只當「有」的證據用，缺漏不影響任何「沒有」的宣稱。
   const mcpRefs = new Set();
   let scanTruncated = false;
   try {
-    const MAX_FILES = 200, MAX_BYTES = 5 * 1024 * 1024, MAX_DEPTH = 12, MAX_FILE = 512 * 1024;
-    let files = 0, bytes = 0;
+    const MAX_FILES = 200, MAX_BYTES = 5 * 1024 * 1024, MAX_DEPTH = 12, MAX_FILE = 512 * 1024, MAX_DIRS = 500;
+    let files = 0, bytes = 0, dirs = 0;
     const stack = [[path.resolve(skillAbs), 0]];
     while (stack.length) {
       if (files > MAX_FILES || bytes > MAX_BYTES) { scanTruncated = true; break; }
+      if (++dirs > MAX_DIRS) { scanTruncated = true; break; } // R2-5：目錄數也設限，空目錄海不拖垮指令
       const [dir, depth] = stack.pop();
       if (depth > MAX_DEPTH) { scanTruncated = true; continue; }
-      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { scanTruncated = true; continue; } // 讀不到＝掃描不完整，記下不靜默（R2-5）
       for (const e of entries) {
         const pth = path.join(dir, e.name);
         if (e.isSymbolicLink()) continue;
@@ -154,11 +166,13 @@ function detectPluginContext(skillAbs) {
           if (size > MAX_FILE) { scanTruncated = true; continue; }
           if ((bytes += size) > MAX_BYTES) { scanTruncated = true; break; }
           for (const m of fs.readFileSync(pth, 'utf8').matchAll(/\bmcp__[A-Za-z0-9_-]+/g)) mcpRefs.add(m[0]);
-        } catch { /* 讀不到就跳過 */ }
+        } catch { scanTruncated = true; /* 讀不到＝掃描不完整（R2-5） */ }
       }
     }
   } catch { scanTruncated = true; }
-  if (!pluginRoot && mcpRefs.size === 0) return null;
+  // 無外掛、無 refs：掃描完整才回 null；掃描被截斷就回 inert 物件留下紀錄（揭露句不會印任何字，
+  // 但 report.subjectPlugin 保住「refs 可能沒掃完」的事實，不靜默）（R2-5）
+  if (!pluginRoot && mcpRefs.size === 0 && !scanTruncated) return null;
   return { pluginRoot, manifest: manifestRaw ? { name: manifestRaw.name ?? null, version: manifestRaw.version ?? null } : null, hasHooks, hasMcp, skillsScope, mcpRefs: [...mcpRefs].sort(), scanTruncated };
 }
 
@@ -1248,7 +1262,7 @@ function cleanPluginName(x) {
   if (typeof x !== 'string') return null;
   const t = x.trim();
   // 單行、可列印、長度上限——manifest 是外來 JSON，name 直接進 report.md 行內，不消毒會被注入換行／假結論（R1-6）
-  if (!t || t.length > 80 || /[\u0000-\u001f\u007f]/.test(t)) return null;
+  if (!t || t.length > 80 || /[\u0000-\u001f\u007f\u2028\u2029]/.test(t)) return null;
   return t;
 }
 function pluginBoundaryNote(r) {
