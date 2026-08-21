@@ -124,6 +124,32 @@ const outB = path.join(work, 'out-baseline');
 r = run(['baseline', '--config', CFG, '--out', outB, '--runs', '1']);
 t('baseline 模式可跑', r.code === 0 && fs.existsSync(path.join(outB, 'report.json')), r.out.slice(-400));
 
+// 9. 外掛揭露（1.2.1）：fixture 包進外掛結構 → 邊界句出現；帶 payload 的停案結論出低估警語；陰性＝第一個 fixture 不出外掛句
+t('外掛揭露（陰性）：非外掛 fixture 的邊界行不出現外掛句', !/外掛/.test((rep?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
+const fx2 = path.join(work, 'fixture-plugin');
+fs.cpSync(FIXTURE, fx2, { recursive: true });
+const CFG2 = path.join(fx2, 'gauge', 'gauge.json');
+for (const f of ['lock.json', 'history.jsonl']) fs.rmSync(path.join(fx2, 'gauge', f), { force: true });
+if (fs.existsSync(path.join(fx2, 'gauge', 'runs'))) fs.rmSync(path.join(fx2, 'gauge', 'runs'), { recursive: true, force: true });
+for (const f of fs.readdirSync(path.join(fx2, 'gauge'))) if (f.startsWith('lock.prev-')) fs.rmSync(path.join(fx2, 'gauge', f));
+fs.mkdirSync(path.join(fx2, '.claude-plugin'), { recursive: true });
+fs.writeFileSync(path.join(fx2, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'fixture-plugin', version: '0.0.1' }));
+fs.mkdirSync(path.join(fx2, 'hooks'), { recursive: true });
+fs.writeFileSync(path.join(fx2, 'hooks', 'hooks.json'), '{}');
+fs.writeFileSync(path.join(fx2, '.mcp.json'), '{}');
+let rp = run(['lock', '--config', CFG2]); t('外掛揭露：lock 成功', rp.code === 0, rp.out.slice(-300));
+const outP = path.join(work, 'out-plugin');
+rp = run(['all', '--config', CFG2, '--out', outP, '--runs', '1']);
+t('外掛揭露：all 跑完（exit 0）', rp.code === 0, rp.out.slice(-400));
+const repP = fs.existsSync(path.join(outP, 'report.json')) ? readJ(path.join(outP, 'report.json')) : null;
+t('外掛揭露：report.json 記 subjectPlugin（root＋hooks＋MCP）', repP?.subjectPlugin?.pluginRoot?.endsWith('fixture-plugin') === true && repP.subjectPlugin.hasHooks === true && repP.subjectPlugin.hasMcp === true, JSON.stringify(repP?.subjectPlugin));
+t('外掛揭露：決策摘要邊界行含外掛句（低估甚至測不到）', /另外，受測 skill 隸屬外掛 fixture-plugin/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || '') && /低估甚至測不到/.test((repP?.decisionFirst || []).find((l) => l.startsWith('【邊界】')) || ''));
+t('外掛揭露：report.md 也含同一句', fs.existsSync(path.join(outP, 'report.md')) && /隸屬外掛 fixture-plugin/.test(fs.readFileSync(path.join(outP, 'report.md'), 'utf8')));
+const outPS = path.join(work, 'out-plugin-stop');
+const rps = spawnSync(process.execPath, [ENGINE, 'all', '--config', CFG2, '--out', outPS, '--runs', '1', '--root', root], { env: { ...env, GAUGE_STUB_MODE: 'perfect-baseline' }, encoding: 'utf8' });
+const repPS = fs.existsSync(path.join(outPS, 'report.json')) ? readJ(path.join(outPS, 'report.json')) : null;
+t('外掛揭露：帶 payload 的停案（STOP）結論行出低估警語', rps.status === 3 && /「沒必要」可能是低估的誤判/.test(repPS?.decisionFirst?.[0] || ''), (repPS?.decisionFirst?.[0] || '') + ((rps.stdout || '') + (rps.stderr || '')).slice(-200));
+
 console.log(`\n${n - bad}/${n} 通過`);
 if (!bad) { fs.rmSync(work, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
 else console.log(`（失敗，保留 ${work} 與 ${root} 供檢查）`);

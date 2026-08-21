@@ -4,7 +4,7 @@ process.env.GAUGE_NO_MAIN = '1';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict, comparabilityIssue, baselineVerdict } = await import('./gauge.mjs');
+const { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, sumComplete, buildReport, usdDigits, fmtUsd, reportMarkdown, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, usdFmt, scenarioVerdict, comparabilityIssue, baselineVerdict } = await import('./gauge.mjs');
 let n = 0, bad = 0; const t = (name, cond) => { n++; if (!cond) { bad++; console.log('✗', name); } else console.log('✓', name); };
 
 // 祖先掃描：有 .claude 的上層要被抓到，自己這層不算
@@ -1121,6 +1121,57 @@ try {
   t('preview render：detectKind 判成 preview', R.detectKind(minimalPreview) === 'preview');
   t('preview render：無 kind 但有 prereg＋cases 且無 totals → detectKind=preview', R.detectKind({ prereg: {}, cases: [] }) === 'preview');
 } catch (e) { t('render.mjs 可載入（' + (e?.message || e).toString().slice(0, 80) + '）', false); }
+
+// 外掛揭露（plugin disclosure，1.2.1；spec: gauge/plugin-disclosure-dev/spec.md）：偵測＋揭露句，陽性陰性成對
+{
+  const pd = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-plug-'));
+  const proot = path.join(pd, 'my-plugin'), skdir = path.join(proot, 'skills', 'x');
+  fs.mkdirSync(path.join(proot, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(proot, 'hooks'), { recursive: true });
+  fs.mkdirSync(skdir, { recursive: true });
+  fs.writeFileSync(path.join(proot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'demo-plug', version: '9.9.9' }));
+  fs.writeFileSync(path.join(proot, 'hooks', 'hooks.json'), '{}');
+  fs.writeFileSync(path.join(proot, '.mcp.json'), '{}');
+  fs.writeFileSync(path.join(skdir, 'SKILL.md'), '---\nname: x\n---\n用 mcp__figma__get_data 抓資料。');
+  const hit = detectPluginContext(skdir);
+  t('外掛偵測（陽性）：抓到 pluginRoot＋manifest name/version', hit?.pluginRoot === proot && hit.manifest?.name === 'demo-plug' && hit.manifest?.version === '9.9.9');
+  t('外掛偵測（陽性）：hooks／MCP／mcpRefs 全偵測到', hit?.hasHooks === true && hit?.hasMcp === true && JSON.stringify(hit?.mcpRefs) === '["mcp__figma__get_data"]');
+  const plain = path.join(pd, 'plain', 'skills', 'y'); fs.mkdirSync(plain, { recursive: true });
+  fs.writeFileSync(path.join(plain, 'SKILL.md'), '---\nname: y\n---\n普通 skill。');
+  t('外掛偵測（陰性）：素 skill 回 null', detectPluginContext(plain) === null);
+  const broot = path.join(pd, 'bad-plugin'), bsk = path.join(broot, 'skills', 'z');
+  fs.mkdirSync(path.join(broot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(bsk, { recursive: true });
+  fs.writeFileSync(path.join(broot, '.claude-plugin', 'plugin.json'), '{oops');
+  fs.writeFileSync(path.join(bsk, 'SKILL.md'), 'z');
+  const bh = detectPluginContext(bsk);
+  t('外掛偵測：manifest 壞 JSON 不炸、manifest=null、仍回報 pluginRoot', bh?.pluginRoot === broot && bh.manifest === null);
+  const mroot = path.join(pd, 'market'), msk = path.join(mroot, 'skills', 'w');
+  fs.mkdirSync(path.join(mroot, '.claude-plugin'), { recursive: true }); fs.mkdirSync(msk, { recursive: true });
+  fs.writeFileSync(path.join(mroot, '.claude-plugin', 'marketplace.json'), '{}');
+  fs.writeFileSync(path.join(msk, 'SKILL.md'), 'w');
+  t('外掛偵測：只有 marketplace.json 的祖先不算外掛（plugin.json 才是主鍵）', detectPluginContext(msk) === null);
+  const rroot = path.join(pd, 'refonly'); fs.mkdirSync(rroot, { recursive: true });
+  fs.writeFileSync(path.join(rroot, 'SKILL.md'), '叫 mcp__jira__search，之後再叫一次 mcp__jira__search');
+  const rh = detectPluginContext(rroot);
+  t('外掛偵測：無外掛祖先、內文有 mcp__ → pluginRoot=null＋refs 去重', rh?.pluginRoot === null && JSON.stringify(rh?.mcpRefs) === '["mcp__jira__search"]');
+  const strong = pluginBoundaryNote({ subjectPlugin: hit });
+  t('揭露句（強）：帶 hook／MCP 的外掛→低估甚至測不到', /隸屬外掛 demo-plug/.test(strong) && /hook／MCP 設定/.test(strong) && /低估甚至測不到/.test(strong));
+  const soft = pluginBoundaryNote({ subjectPlugin: { pluginRoot: '/p', manifest: { name: 'soft-plug', version: null }, hasHooks: false, hasMcp: false, mcpRefs: [] } });
+  t('揭露句（軟）：無 payload 外掛→只說涵蓋範圍，不說低估', /未偵測到 hook／MCP 設定檔/.test(soft) && !/低估/.test(soft));
+  const refNote = pluginBoundaryNote({ subjectPlugin: rh });
+  t('揭露句（refs）：內文引用 MCP 工具→沙箱叫不到', /mcp__jira__search/.test(refNote) && /沙箱不掛任何 MCP/.test(refNote));
+  t('揭露句（陰性）：無欄位回空字串（舊報告邊界行逐字不變）', pluginBoundaryNote({}) === '' && pluginBoundaryNote({ subjectPlugin: null }) === '');
+  t('STOP 警語：帶 payload 出、軟外掛不出、無欄位不出', /低估的誤判/.test(pluginStopCaveat({ subjectPlugin: hit })) && pluginStopCaveat({ subjectPlugin: { pluginRoot: '/p', manifest: null, hasHooks: false, hasMcp: false, mcpRefs: [] } }) === '' && pluginStopCaveat({}) === '');
+  const mkPlugR = (sp) => ({ name: 'fx-plug', arms: ['with', 'without'], invalidRuns: [], harnessFailures: [], discardedRunIds: [], cases: [{ id: 'c1' }], runsPlanned: 3,
+    totals: { with: { pass: 3, total: 9 }, without: { pass: 3, total: 9 } }, sensitivity: { delta: 0, sameDenominator: true, flipsToReverse: 1 },
+    cost: { with: { runs: 3, costComplete: true, perSuccessCostUsd: null, successRuns: 0, notFirstPassRuns: 3 }, without: { runs: 3, costComplete: true, perSuccessCostUsd: 0.01, successRuns: 1, notFirstPassRuns: 2 } },
+    summary: { verdict: 'same', needFix: 'x' }, ...(sp ? { subjectPlugin: sp } : {}) });
+  const bWith = decisionFirstLines(mkPlugR(hit)).find((l) => l.startsWith('【邊界】')) || '';
+  const bWithout = decisionFirstLines(mkPlugR(null)).find((l) => l.startsWith('【邊界】')) || '';
+  t('邊界行整合：subjectPlugin 有→外掛句接在行尾', /另外，受測 skill 隸屬外掛 demo-plug/.test(bWith));
+  t('邊界行整合（陰性）：subjectPlugin 無→行內不出現「外掛」，與 1.2.0 逐字相同', !/外掛/.test(bWithout) && bWithout.endsWith('不反映多 skill 併存時的觸發表現。'));
+  fs.rmSync(pd, { recursive: true, force: true });
+}
 
 fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(mdir, { recursive: true, force: true });
 console.log(`\n${n - bad}/${n} 通過`);

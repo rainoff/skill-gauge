@@ -32,7 +32,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const IS_WIN = process.platform === 'win32';
-const ENGINE_VERSION = '1.2.0';
+const ENGINE_VERSION = '1.2.1';
 // 模型指令：預設 claude；GAUGE_CLAUDE_CMD 可換成假模型（例如 "node scripts/stub-claude.mjs"）做端到端測試
 const CLAUDE_CMD = (process.env.GAUGE_CLAUDE_CMD || 'claude').trim().split(/\s+/);
 const ISOLATION_FLAGS = ['--setting-sources', 'project', '--strict-mcp-config'];
@@ -95,6 +95,43 @@ function ancestorsWithClaude(dir) {
     d = parent; parent = path.dirname(d);
   }
   return hits;
+}
+
+// 受測物型態偵測：skill 資料夾是否隸屬外掛（plugin）、內文是否引用 MCP 工具。純揭露用——
+// 偵測不到回 null，任何讀檔／解析錯誤都不擋量測。Why：隔離沙箱只複製 skill 資料夾，外掛的
+// hook／MCP 設定不隨行，兩組一起缺；skill 的效果若依賴它們，兩臂會趨同、被誤判「沒差」
+// （2026-08-21 usage-detection probe：copyDir 只搬 skill 資料夾）。
+function detectPluginContext(skillAbs) {
+  if (!skillAbs) return null;
+  let pluginRoot = null;
+  let d = path.resolve(skillAbs);
+  let parent = path.dirname(d);
+  while (parent !== d) {
+    // 主鍵是 .claude-plugin/plugin.json；只有 marketplace.json 的是 marketplace 根、不是外掛本體
+    if (fs.existsSync(path.join(parent, '.claude-plugin', 'plugin.json'))) { pluginRoot = parent; break; }
+    d = parent; parent = path.dirname(d);
+  }
+  let manifestRaw = null;
+  if (pluginRoot) { try { manifestRaw = JSON.parse(fs.readFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), 'utf8')); } catch { manifestRaw = null; } }
+  const hasHooks = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, 'hooks', 'hooks.json')) || manifestRaw?.hooks != null);
+  const hasMcp = !!pluginRoot && (fs.existsSync(path.join(pluginRoot, '.mcp.json')) || manifestRaw?.mcpServers != null);
+  const mcpRefs = new Set();
+  const scan = (dir) => {
+    let entries; try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) { scan(p); continue; }
+      if (!e.name.toLowerCase().endsWith('.md')) continue;
+      try {
+        if (fs.statSync(p).size > 512 * 1024) continue; // refs 是加分訊號，超大檔跳過不報錯
+        for (const m of fs.readFileSync(p, 'utf8').matchAll(/\bmcp__[A-Za-z0-9_-]+/g)) mcpRefs.add(m[0]);
+      } catch { /* 讀不到就跳過 */ }
+    }
+  };
+  scan(path.resolve(skillAbs));
+  if (!pluginRoot && mcpRefs.size === 0) return null;
+  return { pluginRoot, manifest: manifestRaw ? { name: manifestRaw.name ?? null, version: manifestRaw.version ?? null } : null, hasHooks, hasMcp, mcpRefs: [...mcpRefs].sort() };
 }
 
 function defaultRoot() {
@@ -227,6 +264,7 @@ function loadConfig(p) {
     if (!cfg.skill.name) die('gauge.json 的 skill 要有 name');
     cfg.skill.__abs = path.resolve(cfg.__dir, cfg.skill.path);
     if (!fs.existsSync(path.join(cfg.skill.__abs, 'SKILL.md'))) die(`找不到 ${cfg.skill.__abs}/SKILL.md`);
+    cfg.skill.__pluginContext = detectPluginContext(cfg.skill.__abs);
   } else cfg.skill = { name: null, path: null, __abs: null };
   cfg.runs = Number(cfg.runs || 3);
   if (!Number.isInteger(cfg.runs) || cfg.runs < 1) die('runs 必須是 ≥1 的整數');
@@ -776,7 +814,7 @@ function buildReport(cfg, outDir) {
   const famOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.family]));
   const textOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.text]));
   const labelOf = Object.fromEntries(cfg.assertions.map((a) => [a.id, a.label || null]));
-  const report = { kind: 'report', engine: ENGINE_VERSION, name: cfg.name, generatedAt: new Date().toISOString(), arms: cfg.arms.map((a) => a.name), runsPlanned: cfg.runs, cases: [], assertions: {}, totals: {}, cost: {}, flags: [], similarity: [], runs: [] };
+  const report = { kind: 'report', engine: ENGINE_VERSION, name: cfg.name, subjectPlugin: cfg.skill?.__pluginContext ?? null, generatedAt: new Date().toISOString(), arms: cfg.arms.map((a) => a.name), runsPlanned: cfg.runs, cases: [], assertions: {}, totals: {}, cost: {}, flags: [], similarity: [], runs: [] };
   const passCount = {}; // arm -> {pass, total}
   const perAssertion = {}; // id -> arm -> {pass,total}
   const perCase = {};
@@ -1173,6 +1211,34 @@ function summaryMarkdown(sm) {
 // 【邊界】的措辭沿用報告既有「這張表可說明與無法說明」段落（見 reportMarkdown 對應區塊），不重新發明說法
 const BOUNDARY_SAY = '上面的描述性數字，而且只限這次的條件';
 const BOUNDARY_NOT_SAY = '因果通則、外推到題組之外的任務、跨模型比較';
+
+// 外掛揭露句（接在【邊界】行尾）：report.subjectPlugin 由 loadConfig 的 detectPluginContext 而來。
+// 舊報告（無此欄位）回空字串——邊界行與 1.2.0 逐字相同，重出不改寫歷史。
+function pluginBoundaryNote(r) {
+  const p = r?.subjectPlugin;
+  if (!p) return '';
+  const parts = [];
+  if (p.pluginRoot) {
+    const who = p.manifest?.name ? `外掛 ${p.manifest.name}` : '一個外掛';
+    const payload = [p.hasHooks ? 'hook' : null, p.hasMcp ? 'MCP' : null].filter(Boolean).join('／');
+    parts.push(payload
+      ? `受測 skill 隸屬${who}（偵測到 ${payload} 設定）：隔離環境只複製 skill 資料夾，外掛的 hook 與 MCP 不會跟著進去，兩組都拿不到——skill 的效果若依賴它們，這份量測會低估甚至測不到（兩組一起變差，讀起來像「沒差」）`
+      : `受測 skill 隸屬${who}（未偵測到 hook／MCP 設定檔）：量測只涵蓋 skill 資料夾本身，外掛層的其他能力不在範圍內`);
+  }
+  if (p.mcpRefs?.length) {
+    const shown = p.mcpRefs.slice(0, 5).join('、') + (p.mcpRefs.length > 5 ? ` 等共 ${p.mcpRefs.length} 個` : '');
+    parts.push(`skill 內文引用了 MCP 工具（${shown}）：沙箱不掛任何 MCP，兩組都叫不到，依賴它們的部分測不到`);
+  }
+  return parts.length ? `另外，${parts.join('；')}。` : '';
+}
+// STOP（停案）時的低估警語條件：外掛帶 hook／MCP 設定、或 skill 內文引用 MCP 工具——
+// 這正是 probe 指認的誤判形態（兩臂趨同 → 誤下「沒必要」）。
+function pluginStopCaveat(r) {
+  const p = r?.subjectPlugin;
+  if (!p) return '';
+  const risky = (p.pluginRoot && (p.hasHooks || p.hasMcp)) || (p.mcpRefs?.length > 0);
+  return risky ? '（受測 skill 帶有外掛 hook／MCP 脈絡，它們沒進隔離環境——「沒必要」可能是低估的誤判，詳見【邊界】）' : '';
+}
 const pct = (p) => (p == null ? null : Math.round(p * 100));
 // 全對率的分母（場景全對制）：有效 run＝全對＋有效但未成功。前置作廢與無法判定都不進分母。
 function scenarioRate(c) {
@@ -1372,7 +1438,7 @@ function decisionFirstCore(r) {
   const A = arms[0], B = arms.find((x) => x !== A && (r.baseline?.arm === x || x === 'without')) || arms[1];
   const sm = r.summary || plainSummary(r);
   const name = r.name || '（未命名）';
-  const boundary = `【邊界】這次測量可說明 ${BOUNDARY_SAY}；無法說明 ${BOUNDARY_NOT_SAY}；而且本測量為單 skill 隔離，不反映多 skill 併存時的觸發表現。`;
+  const boundary = `【邊界】這次測量可說明 ${BOUNDARY_SAY}；無法說明 ${BOUNDARY_NOT_SAY}；而且本測量為單 skill 隔離，不反映多 skill 併存時的觸發表現。${pluginBoundaryNote(r)}`;
   // 第三組（一句提醒等）：逐臂獨立標註，不影響上面兩臂的比較
   const extraArms = arms.filter((x) => x !== A && x !== B);
   const extraIssues = Object.fromEntries(extraArms.map((x) => [x, armDataIssue(r, x, A)]));
@@ -1385,7 +1451,7 @@ function decisionFirstCore(r) {
     const withRuns = r.cost?.[A]?.runs || 0;
     const partial = withRuns > 0 ? `（帶 skill 那組另有 ${withRuns} 次部分資料——安全探針等，不是完整的兩臂比較）` : '';
     return { lines: [
-      `【結論】${name}：${r.baseline.note}`,
+      `【結論】${name}：${r.baseline.note}${pluginStopCaveat(r)}`,
       `【成功率】未完成同題組同次數的兩臂比較，不算場景全對率（AI 評分）${partial}。`,
       `【情境地圖】未完成同題組同次數的兩臂比較，不畫情境地圖。`,
       `【效果】${sm.helped}`,
@@ -2209,5 +2275,5 @@ async function main() {
   die(`用法：node scripts/gauge.mjs <${COMMANDS.join('|')}> …（見檔頭）`);
 }
 
-export { ancestorsWithClaude, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue, baselineVerdict };
+export { ancestorsWithClaude, detectPluginContext, pluginBoundaryNote, pluginStopCaveat, bigramDice, compareReports, extractJSONArray, parseArgs, summarizeTrigger, splitTrainTest, getDescription, setDescription, extractPressure, buildMatrix, matrixMarkdown, slugify, lastTwoComparable, pressureHeldText, describeMarkdown, buildPreview, extractSayNotSay, plainSummary, assertionLabel, summaryMarkdown, deriveCostMetrics, decisionFirstLines, decisionFirstMarkdown, reportMarkdown, sumComplete, buildReport, usdDigits, usdFmt, fmtUsd, validCostUsd, classifyScenario, benefitKind, costFlowVerdict, verdictContractError, scenarioVerdict, decisionFirstData, dataBlockingIssue, comparabilityIssue, armDataIssue, baselineVerdict };
 if (process.env.GAUGE_NO_MAIN !== '1') main().catch((e) => die(e?.stack || String(e)));
